@@ -20,6 +20,7 @@
 | 异常标签 | 需要可追溯、可版本化、可人工修正 | PostgreSQL |
 | SLO 建议 | 需要审核状态和历史版本 | PostgreSQL |
 | incident timeline | 结构化事件，查询频繁 | PostgreSQL |
+| incident trace evidence | 按需 New Relic trace 摘要和 RCA 证据 | PostgreSQL |
 | New Relic/Prometheus 查询原始响应 | 体积较大，不常查 | S3 |
 | Agent 生成的长报告 | 文本较长，审计用 | S3 + PostgreSQL metadata |
 | 离线训练集导出 | 批量文件，供 notebook/训练任务使用 | S3 |
@@ -156,6 +157,26 @@ create table incident_windows (
 );
 ```
 
+### `incident_trace_evidence`
+
+保存 incident inspect 时按需查询的 New Relic trace 摘要。Trace 不进入常规
+15m runner，只在 incident inspect 或高风险深查时查询。
+
+```sql
+create table incident_trace_evidence (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  newrelic_account_id text,
+  newrelic_app_name text,
+  status text not null,
+  trace_summary jsonb not null default '{}',
+  errors jsonb not null default '[]',
+  created_at timestamptz not null default now()
+);
+```
+
 ### `slo_recommendations`
 
 保存 SLO 建议和审核状态。
@@ -214,13 +235,15 @@ s3://sre-agent-data/
 
 ```mermaid
 flowchart TD
-    Scheduler["15m incremental job / daily backfill"] --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
+    Scheduler["15m runner / gap recovery / daily backfill"] --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
     Query --> Snapshot["Write optional raw snapshot to S3"]
     Query --> Aggregate["Aggregate metrics into windows"]
     Aggregate --> Postgres["Write service_metric_windows"]
-    Postgres --> Baseline["Update service_baselines"]
+    Postgres --> Baseline["Recompute service_baselines via API/manual job"]
     Baseline --> Label["Write anomaly_windows"]
     Label --> SLO["Write slo_recommendations"]
+    Postgres --> Trace["On-demand incident trace inspect"]
+    Trace --> TraceStore["Write incident_trace_evidence"]
     Postgres --> Export["Export training dataset to S3"]
 ```
 

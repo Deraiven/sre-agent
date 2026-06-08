@@ -1,71 +1,113 @@
 services:
   - name: payment-api
-    owner: payment-platform
-    github_repo: org/payment-api
+    description: Payment API Service
+    owner: payments
+    owner_source: cmdb
+    owner_review_required: false
+    github_repo: storehubnet/payment-api
     production_branch: master
-    newrelic_entity_guid: REPLACE_WITH_NEW_RELIC_ENTITY_GUID
+
+    newrelic:
+      app_name: Payment API
+      app_id: "123456789"
+      entity_guid: REPLACE_WITH_NEW_RELIC_ENTITY_GUID
+
     kubernetes:
-      cluster: production
-      namespace: production
+      cluster: storehub-pro
+      namespace: pro
       workload_kind: Deployment
       workload_name: payment-api
-      label_selector: app=payment-api
+      label_selector: ""
+      selector_discovery: from_workload
+      mapping_status: mapped
+
     slo:
       availability_target: 99.9
-      latency_p95_ms: 500
+      availability_target_source: default_v1
+      latency_p95_ms: 750
+      latency_p95_source: baseline-v1.global_p95
+      reviewed: false
+
     newrelic_signals:
-      p95_latency: "Transaction percentile or APM golden metrics query"
-      p99_latency: "Transaction percentile or APM golden metrics query"
-      error_rate: "APM error rate or Transaction error percentage"
-      throughput: "APM throughput or Transaction rate"
+      p95_latency: New Relic APM percentile query
+      p99_latency: New Relic APM percentile query
+      error_rate: New Relic APM error rate
+      throughput: New Relic APM throughput
+      traces: New Relic Transaction and Span NRQL queries for incident inspect
+
     prometheus_resources:
-      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="production", pod=~"payment-api-.*"}[5m]))'
-      memory_usage: 'sum(container_memory_working_set_bytes{namespace="production", pod=~"payment-api-.*"})'
-      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="production", pod=~"payment-api-.*"}[5m]))'
-      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="production", pod=~"payment-api-.*"}[5m]))'
-      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="production", pod=~"payment-api-.*"}[5m]))'
+      status: mapped
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"payment-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+
     dependencies:
       downstream:
-        - inventory-api
-        - postgres-payment
-        - redis-checkout
+        - inventory-svc
+        - merchant-domain-svc
       upstream:
         - checkout-web
+
     runbooks:
       - title: Payment API high latency
         url: https://example.com/runbooks/payment-api-high-latency
-      - title: Payment API rollback
-        url: https://example.com/runbooks/payment-api-rollback
 
-  - name: inventory-api
-    owner: inventory-platform
-    github_repo: org/inventory-api
+    tags:
+      - api
+      - payment
+
+  - name: unmapped-service
+    description: Example service with missing Kubernetes workload mapping
+    owner: unassigned
+    owner_source: unknown
+    owner_review_required: true
+    github_repo: storehubnet/unmapped-service
     production_branch: master
-    newrelic_entity_guid: REPLACE_WITH_NEW_RELIC_ENTITY_GUID
+
+    newrelic:
+      app_name: Unmapped Service
+      app_id: "987654321"
+      entity_guid: REPLACE_WITH_NEW_RELIC_ENTITY_GUID
+
     kubernetes:
-      cluster: production
-      namespace: production
-      workload_kind: Deployment
-      workload_name: inventory-api
-      label_selector: app=inventory-api
+      cluster: storehub-pro
+      namespace: pro
+      workload_kind: null
+      workload_name: null
+      label_selector: ""
+      selector_discovery: missing
+      mapping_status: missing
+
     slo:
       availability_target: 99.9
-      latency_p95_ms: 700
+      availability_target_source: default_v1
+      latency_p95_ms: null
+      latency_p95_source: insufficient_or_zero_latency_baseline
+      reviewed: false
+
     newrelic_signals:
-      p95_latency: "Transaction percentile or APM golden metrics query"
-      p99_latency: "Transaction percentile or APM golden metrics query"
-      error_rate: "APM error rate or Transaction error percentage"
-      throughput: "APM throughput or Transaction rate"
+      p95_latency: New Relic APM percentile query
+      p99_latency: New Relic APM percentile query
+      error_rate: New Relic APM error rate
+      throughput: New Relic APM throughput
+      traces: New Relic Transaction and Span NRQL queries for incident inspect
+
     prometheus_resources:
-      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="production", pod=~"inventory-api-.*"}[5m]))'
-      memory_usage: 'sum(container_memory_working_set_bytes{namespace="production", pod=~"inventory-api-.*"})'
-      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="production", pod=~"inventory-api-.*"}[5m]))'
+      status: missing
+      reason: k8s_workload_mapping_missing
+      cpu_usage: null
+      memory_usage: null
+      cpu_throttling: null
+      network_receive: null
+      network_transmit: null
+
     dependencies:
-      downstream:
-        - postgres-inventory
-      upstream:
-        - payment-api
-        - product-api
-    runbooks:
-      - title: Inventory API incident triage
-        url: https://example.com/runbooks/inventory-api-triage
+      downstream: []
+      upstream: []
+
+    runbooks: []
+
+    tags:
+      - service

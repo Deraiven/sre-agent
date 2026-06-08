@@ -21,7 +21,7 @@ SLO 不是历史平均值，也不是理想口号。比较稳的做法是先用�
 | 最近 90 天 | 只能依赖自建长期数据集；用于看周期性、促销、月底、节假日等影响 |
 | 历史 incident 窗口 | 识别用户不可接受边界 |
 
-建议默认使用监控系统中的最近 30 天生成第一版 SLO。第 31 天开始，90 天分析应来自自建的 `slo_training_windows` 数据集，而不是依赖 New Relic/Prometheus 原始留存。
+建议默认使用监控系统中的最近 30 天生成第一版 SLO。第 31 天开始，90 天分析应来自自建的 `service_metric_windows` 数据集，而不是依赖 New Relic/Prometheus 原始留存。
 
 ## 三、SLI 分类
 
@@ -140,7 +140,7 @@ SLO 不是历史平均值，也不是理想口号。比较稳的做法是先用�
 | `service_baselines` | 每个服务按小时/星期几分组的动态基线 | 12-24 个月 |
 | `anomaly_windows` | 被标记为异常的窗口和原因 | 永久或 24 个月 |
 | `incident_windows` | incident 影响窗口和人工结论 | 永久 |
-| `change_windows` | GitHub master commit、New Relic change event、rollout 相关窗口 | 12-24 个月 |
+| `service_metric_windows.change_context` | GitHub master commit、New Relic change event、rollout 相关上下文 | 12-24 个月 |
 | `slo_recommendations` | SLO 建议、证据、审核状态 | 永久 |
 
 ### 训练样本结构

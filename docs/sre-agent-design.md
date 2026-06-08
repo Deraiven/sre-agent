@@ -63,7 +63,7 @@ flowchart LR
 | 数据源 | 用途 | 第一版接入方式 | 注意点 |
 | --- | --- | --- | --- |
 | Prometheus MCP | 资源指标、容器/Pod CPU、内存、网络、磁盘、资源饱和度 | PromQL instant/range query | 不用于 p95/p99；只维护资源类 PromQL 模板 |
-| New Relic MCP | APM golden metrics、p95/p99 latency、throughput、error rate、transactions、logs、error groups、alert issues | New Relic MCP tools | 优先按 entity GUID 查询，避免靠名称模糊匹配 |
+| New Relic | APM golden metrics、p95/p99 latency、throughput、error rate、transactions、logs、error groups、alert issues、traces | 当前实现使用 New Relic GraphQL/NRQL；设计上可替换为 New Relic MCP tools | 优先按 entity GUID/app name 查询，避免靠名称模糊匹配 |
 | Kubernetes inspect | Deployment/StatefulSet/Pod 状态、rollout、restart、events、probe、调度、资源限制、镜像版本 | Kubernetes API 或只读 kubectl 工具 | 作为 incident 调研必查流程，所有操作默认只读 |
 | GitHub `master` | 变更事件代理、代码 diff、可能影响范围 | GitHub API 或本地 repo 最新提交 | commit 时间不一定等于真实发布时间，需要在报告中标记为 inferred |
 | Service Catalog | 服务 owner、repo、SLO、依赖关系、K8s namespace/workload/selector | 先用 YAML/JSON 配置 | 后续可接 CMDB/K8s/New Relic entity tags |
@@ -78,6 +78,7 @@ flowchart LR
 | throughput | New Relic MCP | 用 APM transaction/request throughput |
 | error rate | New Relic MCP | 用 APM error rate、error groups、transaction errors |
 | logs/errors | New Relic MCP | 用 logs、error groups、transaction samples |
+| traces | New Relic GraphQL/NRQL | incident inspect 按需查询 slow transactions、Span category、external/datastore hotspots |
 | CPU/memory/network/disk | Prometheus MCP | 容器、Pod、Node、队列等资源压力 |
 | Pod restarts/events/probes | Kubernetes inspect | 识别 CrashLoopBackOff、OOMKilled、probe failure、ImagePull、调度失败 |
 | rollout/image/config | Kubernetes inspect + GitHub | 查实际运行镜像、rollout revision、config/secret/env 引用和代码变更 |
@@ -155,7 +156,8 @@ Kubernetes mapping 当前包含 namespace 和 deployment 名称。label selector
 flowchart TD
     Alert["Alert or User Question"] --> Scope["Identify service, time range, severity"]
     Scope --> Golden["Analyze golden signals"]
-    Golden --> K8sInspect["Inspect Kubernetes workload state"]
+    Golden --> Trace["Inspect New Relic traces on demand"]
+    Trace --> K8sInspect["Inspect Kubernetes workload state"]
     K8sInspect --> Change["Check New Relic changes and GitHub master commits"]
     Change --> Dependencies["Inspect upstream and downstream dependencies"]
     Dependencies --> Logs["Analyze logs and error groups"]
@@ -185,6 +187,7 @@ flowchart TD
 | `prometheus.query_range` | PromQL、时间范围、step | 时间序列和异常点 |
 | `newrelic.golden_metrics` | entity GUID、时间范围 | APM golden signals |
 | `newrelic.transactions` | entity GUID、时间范围 | 慢事务、错误率、吞吐 |
+| `newrelic.traces` | service、时间范围 | slow transactions、Span category、external/datastore hotspots、trace samples |
 | `newrelic.logs` | entity GUID、时间范围 | 错误模式和样例日志 |
 | `newrelic.error_groups` | entity GUID、时间范围 | 错误聚类 |
 | `kubernetes.inspect_workload` | namespace、kind、name、时间范围 | workload 状态、replicas、rollout、镜像、重启 |
@@ -292,26 +295,40 @@ flowchart LR
 ```yaml
 services:
   - name: payment-api
-    owner: payment-platform
-    github_repo: org/payment-api
+    description: Payment API Service
+    owner: payments
+    owner_source: cmdb
+    owner_review_required: false
+    github_repo: storehubnet/payment-api
     production_branch: master
-    newrelic_entity_guid: "REPLACE_ME"
-    slo:
-      availability_target: 99.9
-      latency_p95_ms: 500
+    newrelic:
+      app_name: Payment API
+      app_id: "123456789"
+      entity_guid: "REPLACE_ME"
     kubernetes:
-      namespace: production
+      cluster: storehub-pro
+      namespace: pro
       workload_kind: Deployment
       workload_name: payment-api
-      label_selector: app=payment-api
+      label_selector: ""
+      selector_discovery: from_workload
+      mapping_status: mapped
+    slo:
+      availability_target: 99.9
+      availability_target_source: default_v1
+      latency_p95_ms: 750
+      latency_p95_source: baseline-v1.global_p95
+      reviewed: false
     prometheus_resources:
-      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="production", pod=~"payment-api-.*"}[5m]))'
-      memory_usage: 'sum(container_memory_working_set_bytes{namespace="production", pod=~"payment-api-.*"})'
+      status: mapped
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"payment-api-.*"})'
     newrelic_signals:
-      p95_latency: "APM golden metrics or Transaction percentile query"
-      p99_latency: "APM golden metrics or Transaction percentile query"
-      error_rate: "APM error rate"
-      throughput: "APM throughput"
+      p95_latency: New Relic APM percentile query
+      p99_latency: New Relic APM percentile query
+      error_rate: New Relic APM error rate
+      throughput: New Relic APM throughput
+      traces: New Relic Transaction and Span NRQL queries for incident inspect
 ```
 
 ## 十五、管理层摘要

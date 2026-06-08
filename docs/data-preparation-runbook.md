@@ -48,8 +48,12 @@ MVP 必须先建：
 | --- | --- |
 | `services` | 服务上下文 |
 | `service_metric_windows` | 聚合训练窗口 |
+| `service_baselines` | 动态基线 |
 | `anomaly_windows` | 异常标签 |
+| `incident_windows` | 人工确认 incident 标签 |
+| `incident_trace_evidence` | New Relic trace 深查摘要 |
 | `slo_recommendations` | SLO 建议 |
+| `artifact_refs` | S3/外部 artifact 引用 |
 
 ## 已验证的 Prometheus 查询
 
@@ -76,12 +80,23 @@ Entity GUID 规则：
 base64("464254|APM|APPLICATION|<newrelic_app_id>")
 ```
 
-## 下一步
+## V1 已实现能力
 
-1. 写 collector，把 `collection_plan.jsonl` 转成实际 New Relic、Prometheus、Kubernetes、GitHub 查询。
-2. 每个 15m 窗口写入 `service_metric_windows`。
-3. 基于 SLO 和动态基线写入 `anomaly_windows`。
-4. 生成 `slo_recommendations`，交给 owner 审核。
+第一版已经具备完整的数据采集和基础智能分析链路：
+
+| 能力 | 实现 |
+| --- | --- |
+| 历史回填 | `scripts/backfill_15m_bulk.py` 回填 30 天 New Relic + Prometheus 15m 窗口 |
+| 实时采集 | `scripts/collect_windows.py` 采集 New Relic、Prometheus、Kubernetes inspect、GitHub change context |
+| HTTP 服务 | `python3 -m sre_agent.service` |
+| Schedule runner | 每 15 分钟采集最近 60 分钟完整窗口 |
+| Gap recovery | 每轮扫描最近 24 小时缺失/失败窗口，最多回填 8 个 15m 窗口 |
+| Baseline | `POST /baseline/recompute` 写入 `service_baselines` |
+| Anomaly | `POST /anomalies/mark` 或 runner 采集后自动写入 `anomaly_windows` |
+| Risk | `GET /services/{service_id}/risk` 和 `POST /risk/score` |
+| Incident inspect | `POST /inspect/incident`，默认包含 New Relic trace 深查 |
+
+运行和排障见 `docs/runtime-runbook.md`。Incident 深查见 `docs/incident-inspect.md`。
 
 ## 运行 MVP Collector
 
