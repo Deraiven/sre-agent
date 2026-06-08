@@ -1,0 +1,18 @@
+{
+  "catalog_json": "config/service-mapping.raw.json",
+  "days": 30,
+  "end": "2026-06-05T07:00:00Z",
+  "expected_metric_windows": 149760,
+  "generated_at": "2026-06-05T08:20:30.457457Z",
+  "k8s_cluster": "storehub-pro",
+  "newrelic_account_id": "464254",
+  "outputs": {
+    "collection_plan": "collection_plan.jsonl",
+    "sample_window_tasks": "window_tasks.sample.jsonl",
+    "services_seed": "services_seed.jsonl"
+  },
+  "service_count": 52,
+  "start": "2026-05-06T07:00:00Z",
+  "window_count_per_service": 2880,
+  "window_size": "15m"
+}

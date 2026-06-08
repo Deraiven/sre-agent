@@ -1,0 +1,1932 @@
+# Generated from config/service-mapping.raw.json.
+# Prometheus entries are resource-only; New Relic is the source for p95/p99, throughput, and error rate.
+services:
+  - name: "3p-webhook-adapter-infra-svc"
+    description: "3p_webhook_adapter-infra-svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/3p_webhook_adapter-infra-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "3p_webhook_adapter-infra-svc"
+      app_id: "1022983091"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDIyOTgzMDkx"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "webhook-adapter-infra-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"webhook-adapter-infra-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"webhook-adapter-infra-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"webhook-adapter-infra-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"webhook-adapter-infra-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"webhook-adapter-infra-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "adapter"
+      - "infrastructure"
+      - "webhook"
+  - name: "3pl-adapter-infra-svc"
+    description: "3pl_adapter-infra-svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/3pl_adapter-infra-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "3pl_adapter-infra-svc"
+      app_id: "1013640955"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDEzNjQwOTU1"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "th3pl-adapter-infra-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"th3pl-adapter-infra-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"th3pl-adapter-infra-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"th3pl-adapter-infra-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"th3pl-adapter-infra-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"th3pl-adapter-infra-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "adapter"
+      - "infrastructure"
+  - name: "thpfd-adapter"
+    description: "thpfd-adapter Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/3rd_party_food_delivery_adapter-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "3rd_party_food_delivery_adapter-svc"
+      app_id: "985257771"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5ODUyNTc3NzE="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "thpfd-adapter"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"thpfd-adapter-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"thpfd-adapter-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"thpfd-adapter-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"thpfd-adapter-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"thpfd-adapter-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "adapter"
+  - name: "app-push-infra"
+    description: "app-push-infra Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/app_push-infra-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "app-push-infra"
+      app_id: "820795784"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw4MjA3OTU3ODQ="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "apppush-infra"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"apppush-infra-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"apppush-infra-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"apppush-infra-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"apppush-infra-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"apppush-infra-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "infrastructure"
+      - "push"
+  - name: "auth-api"
+    description: "Auth API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/auth-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "Auth API"
+      app_id: "831620574"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw4MzE2MjA1NzQ="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "auth-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"auth-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"auth-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"auth-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"auth-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"auth-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+      - "authentication"
+  - name: "backoffice-migrate-jobs"
+    description: "BackOffice-migrate-jobs Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/backoffice-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "BackOffice-migrate-jobs"
+      app_id: "1026928768"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDI2OTI4NzY4"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "backoffice-v1-web-migratejob"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"backoffice-v1-web-migratejob-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"backoffice-v1-web-migratejob-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"backoffice-v1-web-migratejob-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"backoffice-v1-web-migratejob-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"backoffice-v1-web-migratejob-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "job"
+  - name: "backoffice-public-api"
+    description: "Backoffice-public-api Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/backoffice-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "Backoffice-public-api"
+      app_id: "1053455931"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDUzNDU1OTMx"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "backoffice-v1-web-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"backoffice-v1-web-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"backoffice-v1-web-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"backoffice-v1-web-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"backoffice-v1-web-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"backoffice-v1-web-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+  - name: "backoffice-scheduled-jobs"
+    description: "BackOffice-scheduled-jobs Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/backoffice-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "BackOffice Server"
+      app_id: "2183378"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwyMTgzMzc4"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "backoffice-v1-web-scheduledjob"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"backoffice-v1-web-scheduledjob-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"backoffice-v1-web-scheduledjob-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"backoffice-v1-web-scheduledjob-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"backoffice-v1-web-scheduledjob-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"backoffice-v1-web-scheduledjob-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "job"
+  - name: "backoffice-server"
+    description: "BackOffice Server Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/backoffice-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "BackOffice Server"
+      app_id: "2183378"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwyMTgzMzc4"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "backoffice-v1-web-app"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"backoffice-v1-web-app-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"backoffice-v1-web-app-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"backoffice-v1-web-app-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"backoffice-v1-web-app-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"backoffice-v1-web-app-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "backoffice-v2-bff"
+    description: "BackOfficeV2 BFF Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/backoffice-v2-bff"
+    production_branch: "master"
+    newrelic:
+      app_name: "BackOfficeV2 BFF"
+      app_id: "622456081"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2MjI0NTYwODE="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "backoffice-v2-bff"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"backoffice-v2-bff-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"backoffice-v2-bff-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"backoffice-v2-bff-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"backoffice-v2-bff-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"backoffice-v2-bff-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "bff"
+  - name: "beep-v1-web"
+    description: "Beep Backend for Frontend"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/beep-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "Beep BFF"
+      app_id: "576367532"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw1NzYzNjc1MzI="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "beep-v1-web"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"beep-v1-web-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"beep-v1-web-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"beep-v1-web-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"beep-v1-web-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"beep-v1-web-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "bff"
+      - "mobile"
+      - "api"
+  - name: "campaign-svc"
+    description: "Campaign Management Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/campaign-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "campaign-svc"
+      app_id: "1035358423"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDM1MzU4NDIz"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "campaign-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"campaign-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"campaign-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"campaign-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"campaign-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"campaign-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "grpc"
+      - "campaign"
+      - "marketing"
+  - name: "core-api"
+    description: "Core API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "Core API"
+      app_id: "456826027"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw0NTY4MjYwMjc="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+  - name: "core-event-consumer-beep"
+    description: "core-event-consumer-backOfficeAppJPush Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-backOfficeAppJPush"
+      app_id: "1045709962"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDQ1NzA5OTYy"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-beep"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-beep-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-beep-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-beep-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-beep-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-beep-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "push"
+      - "event"
+  - name: "core-event-consumer-beepapp"
+    description: "core-event-consumer-beepAppPush Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-beepAppPush"
+      app_id: "1045732906"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDQ1NzMyOTA2"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-beepapp"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-beepapp-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-beepapp-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-beepapp-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-beepapp-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-beepapp-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "push"
+      - "event"
+  - name: "core-event-consumer-bo"
+    description: "core-event-consumer-beepOrderStatus Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-beepOrderStatus"
+      app_id: "1045726012"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDQ1NzI2MDEy"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-bo"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-bo-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-bo-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-bo-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-bo-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-bo-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "event"
+  - name: "core-event-consumer-msg"
+    description: "core-event-consumer-messengerApp Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-messengerApp"
+      app_id: "992382190"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5OTIzODIxOTA="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-msg"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-msg-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-msg-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-msg-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-msg-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-msg-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "event"
+  - name: "core-event-consumer-payment"
+    description: "core-event-consumer-paymentRefund Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-paymentRefund"
+      app_id: "992370984"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5OTIzNzA5ODQ="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-payment"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-payment-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-payment-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-payment-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-payment-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-payment-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "payment"
+      - "event"
+  - name: "core-event-consumer-sms"
+    description: "core-event-consumer-sms Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-sms"
+      app_id: "1045719086"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDQ1NzE5MDg2"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-sms"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-sms-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-sms-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-sms-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-sms-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-sms-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "event"
+  - name: "core-event-consumer-zendesk"
+    description: "core-event-consumer-zendesk Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/core-event-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "core-event-consumer-zendesk"
+      app_id: "992398689"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5OTIzOTg2ODk="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "core-event-consumer-zendesk"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"core-event-consumer-zendesk-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"core-event-consumer-zendesk-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"core-event-consumer-zendesk-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"core-event-consumer-zendesk-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"core-event-consumer-zendesk-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+      - "consumer"
+      - "event"
+  - name: "crm-api"
+    description: "Customer Relationship Management API"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/crm-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "CRM-API"
+      app_id: "642035607"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2NDIwMzU2MDc="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "crm-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"crm-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"crm-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"crm-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"crm-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"crm-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+      - "customer"
+      - "loyalty"
+  - name: "customers-svc"
+    description: "customers-svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/customers-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "customers-svc"
+      app_id: "1038888592"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDM4ODg4NTky"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "customer-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"customer-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"customer-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"customer-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"customer-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"customer-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "e-invoice-adapter-svc"
+    description: "e-invoice_adapter-svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/e-invoice_adapter-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "e-invoice_adapter-svc"
+      app_id: "1091895932"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDkxODk1OTMy"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "e-invoice-adapter-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"e-invoice-adapter-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"e-invoice-adapter-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"e-invoice-adapter-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"e-invoice-adapter-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"e-invoice-adapter-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "adapter"
+  - name: "ecommerce-v1-api"
+    description: "Main Ecommerce API"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ecommerce-v1-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "Ecommerce API"
+      app_id: "456055590"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw0NTYwNTU1OTA="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ecommerce-v1-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ecommerce-v1-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ecommerce-v1-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ecommerce-v1-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ecommerce-v1-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ecommerce-v1-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+      - "ecommerce"
+      - "main"
+  - name: "ecommerce-v1-consumer"
+    description: "Ecommerce Consumer Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ecommerce-v1-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "ecommerce-v1-consumer"
+      app_id: "1073032970"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDczMDMyOTcw"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ec-v1-consumer"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ec-v1-consumer-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ec-v1-consumer-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ec-v1-consumer-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ec-v1-consumer-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ec-v1-consumer-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "api"
+      - "ecommerce"
+  - name: "ecommerce-v1-consumer-checkout"
+    description: "Ecommerce Consumer Checkout Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ecommerce-v1-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "ecommerce-v1-consumer-checkout"
+      app_id: "1022636800"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDIyNjM2ODAw"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ec-v1-consumer-checkout"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ec-v1-consumer-checkout-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ec-v1-consumer-checkout-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ec-v1-consumer-checkout-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ec-v1-consumer-checkout-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ec-v1-consumer-checkout-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+      - "checkout"
+      - "ecommerce"
+  - name: "ecommerce-v1-consumer-order"
+    description: "ecommerce-v1-consumer-order Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ecommerce-v1-consumer"
+    production_branch: "master"
+    newrelic:
+      app_name: "ecommerce-v1-consumer-order"
+      app_id: "995539108"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5OTU1MzkxMDg="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ec-v1-consumer-order"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ec-v1-consumer-order-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ec-v1-consumer-order-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ec-v1-consumer-order-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ec-v1-consumer-order-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ec-v1-consumer-order-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "consumer"
+  - name: "ecommerce-v1-web"
+    description: "Ecommerce Web Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ecommerce-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "Ecommerce Web"
+      app_id: "1053118445"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDUzMTE4NDQ1"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ecommerce-v1-web"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ecommerce-v1-web-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ecommerce-v1-web-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ecommerce-v1-web-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ecommerce-v1-web-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ecommerce-v1-web-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "employee-domain-svc"
+    description: "Employee Domain Svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/employee-domain-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Employee Domain Svc"
+      app_id: "1002456298"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDAyNDU2Mjk4"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "employee-domain-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"employee-domain-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"employee-domain-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"employee-domain-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"employee-domain-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"employee-domain-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "inventory-svc"
+    description: "inventory-svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/inventory-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "inventory-svc"
+      app_id: "1052093737"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDUyMDkzNzM3"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "inventory-domain-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"inventory-domain-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"inventory-domain-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"inventory-domain-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"inventory-domain-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"inventory-domain-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "ist-web"
+    description: "IST web Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/ist-v1-web"
+    production_branch: "master"
+    newrelic:
+      app_name: "IST web"
+      app_id: "801921006"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw4MDE5MjEwMDY="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "ist-v1-web"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"ist-v1-web-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"ist-v1-web-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"ist-v1-web-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"ist-v1-web-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"ist-v1-web-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "logistics-app-svc"
+    description: "Logistics App Svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/logistics-app-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Logistics App Svc"
+      app_id: "1013588354"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDEzNTg4MzU0"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "logistics-app-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"logistics-app-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"logistics-app-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"logistics-app-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"logistics-app-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"logistics-app-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "merchant-domain-svc"
+    description: "Merchant Domain Svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/merchant-domain-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Merchant Domain Svc"
+      app_id: "718461111"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw3MTg0NjExMTE="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "merchant-domain-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"merchant-domain-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"merchant-domain-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"merchant-domain-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"merchant-domain-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"merchant-domain-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "grpc"
+  - name: "messenger-svc"
+    description: "Messenger SVC Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/messenger_apps-infra-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Messenger SVC"
+      app_id: "1073033082"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDczMDMzMDgy"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "messenger-apps-infra-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"messenger-apps-infra-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"messenger-apps-infra-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"messenger-apps-infra-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"messenger-apps-infra-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"messenger-apps-infra-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "online-purchase-svc"
+    description: "Online Purchase Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "sstorehubnet/online_purchase-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "online_purchase-svc"
+      app_id: "1053532194"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDUzNTMyMTk0"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "online-purchase-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"online-purchase-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"online-purchase-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"online-purchase-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"online-purchase-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"online-purchase-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "purchase"
+      - "transaction"
+      - "online"
+  - name: "online-store-domain-svc"
+    description: "Online Store Domain Svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/online_store-domain-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Online Store Domain Svc"
+      app_id: "1088829801"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDg4ODI5ODAx"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "online-store-domain-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"online-store-domain-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"online-store-domain-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"online-store-domain-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"online-store-domain-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"online-store-domain-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "otp-api"
+    description: "One-Time Password API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/otp-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "otp-api"
+      app_id: "690548060"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2OTA1NDgwNjA="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "otp-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"otp-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"otp-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"otp-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"otp-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"otp-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "otp"
+      - "api"
+      - "security"
+      - "authentication"
+  - name: "payment-api"
+    description: "Payment API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/payment-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "payment-api"
+      app_id: "620391894"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2MjAzOTE4OTQ="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "payment-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"payment-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"payment-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "payment"
+      - "api"
+      - "transaction"
+  - name: "payout-api"
+    description: "Payout API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/payout-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "payout-api"
+      app_id: "628365887"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2MjgzNjU4ODc="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "payout-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"payout-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"payout-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"payout-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"payout-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"payout-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "payout"
+      - "api"
+      - "finance"
+  - name: "pos-v3-bff"
+    description: "POS-V3-BFF Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/pos-v3-bff"
+    production_branch: "master"
+    newrelic:
+      app_name: "POS-V3-BFF"
+      app_id: "1008469748"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDA4NDY5NzQ4"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "pos-v3-bff"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"pos-v3-bff-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"pos-v3-bff-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"pos-v3-bff-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"pos-v3-bff-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"pos-v3-bff-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "bff"
+  - name: "product-domain-svc"
+    description: "Product Domain Svc Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/product-domain-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Product Domain Svc"
+      app_id: "718633074"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw3MTg2MzMwNzQ="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "product-domain-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"product-domain-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"product-domain-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"product-domain-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"product-domain-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"product-domain-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "promotion-api"
+    description: "Promotion API"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/promotion-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "promotion-api"
+      app_id: "1004090426"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDA0MDkwNDI2"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "promotion-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"promotion-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"promotion-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"promotion-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"promotion-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"promotion-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "promotion"
+      - "api"
+      - "marketing"
+  - name: "promotion-svc"
+    description: "Promotion SVC Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/promotion-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Promotion SVC"
+      app_id: "1007360320"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDA3MzYwMzIw"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "promotion-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"promotion-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"promotion-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"promotion-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"promotion-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"promotion-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+      - "promotion"
+      - "discount"
+      - "marketing"
+  - name: "realtime-event-broker-svc"
+    description: "Realtime Event Broker Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/realtime_event_broker-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "realtime_event_broker-svc"
+      app_id: "1043512435"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDQzNTEyNDM1"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "realtime-event-broker-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"realtime-event-broker-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"realtime-event-broker-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"realtime-event-broker-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"realtime-event-broker-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"realtime-event-broker-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "event"
+      - "realtime"
+      - "broker"
+  - name: "report-api"
+    description: "Report API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/report-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "Report API"
+      app_id: "623906532"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2MjM5MDY1MzI="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "report-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"report-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"report-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"report-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"report-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"report-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+      - "report"
+  - name: "shmanager-v1-bff"
+    description: "SHManager-V1-BFF Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/shmanager-v1-bff"
+    production_branch: "master"
+    newrelic:
+      app_name: "SHManager-V1-BFF"
+      app_id: "822365650"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw4MjIzNjU2NTA="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "shmanager-v1-bff"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"shmanager-v1-bff-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"shmanager-v1-bff-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"shmanager-v1-bff-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"shmanager-v1-bff-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"shmanager-v1-bff-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "bff"
+  - name: "sms-api"
+    description: "SMS API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/sms-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "sms-api"
+      app_id: "680450892"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw2ODA0NTA4OTI="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "sms-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"sms-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"sms-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"sms-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"sms-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"sms-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "sms"
+      - "api"
+      - "notification"
+  - name: "storehub-sh-connector-service"
+    description: "StoreHub SH Connector Service Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/StoreHub-SH-Connector-Service"
+    production_branch: "master"
+    newrelic:
+      app_name: "StoreHub SH Connector Service"
+      app_id: "1054683071"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDU0NjgzMDcx"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: null
+      workload_name: null
+      label_selector: ""
+      selector_discovery: "missing"
+      mapping_status: "missing"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"storehub-sh-connector-service-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"storehub-sh-connector-service-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"storehub-sh-connector-service-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"storehub-sh-connector-service-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"storehub-sh-connector-service-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "subscription-adapter-infra-svc"
+    description: "Subscription Adapter Infrastructure Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/subscription_adapter-infra-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "subscription_adapter-infra-svc"
+      app_id: "981461197"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5ODE0NjExOTc="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "sub-adapter-infra-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"sub-adapter-infra-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"sub-adapter-infra-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"sub-adapter-infra-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"sub-adapter-infra-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"sub-adapter-infra-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "subscription"
+      - "adapter"
+      - "infrastructure"
+  - name: "subscription-app-svc"
+    description: "Subscription App SVC Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/subscription-app-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "Subscription App SVC"
+      app_id: "980840317"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw5ODA4NDAzMTc="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "subscription-app-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"subscription-app-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"subscription-app-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"subscription-app-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"subscription-app-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"subscription-app-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "service"
+  - name: "user-preference-api"
+    description: "User Preference API Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/user_preference-api"
+    production_branch: "master"
+    newrelic:
+      app_name: "User Preference API"
+      app_id: "824884886"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnw4MjQ4ODQ4ODY="
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "user-preference-api"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"user-preference-api-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"user-preference-api-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"user-preference-api-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"user-preference-api-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"user-preference-api-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "api"
+  - name: "webhook-svc"
+    description: "Webhook Service"
+    owner: "REPLACE_WITH_OWNER"
+    github_repo: "storehubnet/webhook-svc"
+    production_branch: "master"
+    newrelic:
+      app_name: "webhook-svc"
+      app_id: "1075684325"
+      entity_guid: "NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDc1Njg0MzI1"
+    kubernetes:
+      cluster: "storehub-pro"
+      namespace: "pro"
+      workload_kind: "Deployment"
+      workload_name: "webhook-svc"
+      label_selector: ""
+      selector_discovery: "from_workload"
+    slo:
+      availability_target: 99.9
+      latency_p95_ms: null
+    newrelic_signals:
+      p95_latency: "New Relic APM percentile query"
+      p99_latency: "New Relic APM percentile query"
+      error_rate: "New Relic APM error rate"
+      throughput: "New Relic APM throughput"
+    prometheus_resources:
+      cpu_usage: 'sum(rate(container_cpu_usage_seconds_total{namespace="pro", pod=~"webhook-svc-.*"}[5m]))'
+      memory_usage: 'sum(container_memory_working_set_bytes{namespace="pro", pod=~"webhook-svc-.*"})'
+      cpu_throttling: 'sum(rate(container_cpu_cfs_throttled_seconds_total{namespace="pro", pod=~"webhook-svc-.*"}[5m]))'
+      network_receive: 'sum(rate(container_network_receive_bytes_total{namespace="pro", pod=~"webhook-svc-.*"}[5m]))'
+      network_transmit: 'sum(rate(container_network_transmit_bytes_total{namespace="pro", pod=~"webhook-svc-.*"}[5m]))'
+    dependencies:
+      downstream: []
+      upstream: []
+    runbooks: []
+    tags:
+      - "webhook"
+      - "integration"
+      - "event"

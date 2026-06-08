@@ -1,0 +1,723 @@
+{
+  "services": [
+    {
+      "service_id": "3p-webhook-adapter-infra-svc",
+      "newrelic_app_name": "3p_webhook_adapter-infra-svc",
+      "newrelic_app_id": "1022983091",
+      "github_repo": "storehubnet/3p_webhook_adapter-infra-svc",
+      "eks_deployment": "webhook-adapter-infra-svc",
+      "eks_namespace": "pro",
+      "description": "3p_webhook_adapter-infra-svc Service",
+      "tags": [
+        "service",
+        "adapter",
+        "infrastructure",
+        "webhook"
+      ]
+    },
+    {
+      "service_id": "3pl-adapter-infra-svc",
+      "newrelic_app_name": "3pl_adapter-infra-svc",
+      "newrelic_app_id": "1013640955",
+      "github_repo": "storehubnet/3pl_adapter-infra-svc",
+      "eks_deployment": "th3pl-adapter-infra-svc",
+      "eks_namespace": "pro",
+      "description": "3pl_adapter-infra-svc Service",
+      "tags": [
+        "service",
+        "adapter",
+        "infrastructure"
+      ]
+    },
+    {
+      "service_id": "thpfd-adapter",
+      "newrelic_app_name": "3rd_party_food_delivery_adapter-svc",
+      "newrelic_app_id": "985257771",
+      "github_repo": "storehubnet/3rd_party_food_delivery_adapter-svc",
+      "eks_deployment": "thpfd-adapter",
+      "eks_namespace": "pro",
+      "description": "thpfd-adapter Service",
+      "tags": [
+        "service",
+        "adapter"
+      ]
+    },
+    {
+      "service_id": "app-push-infra",
+      "newrelic_app_name": "app-push-infra",
+      "newrelic_app_id": "820795784",
+      "github_repo": "storehubnet/app_push-infra-svc",
+      "eks_deployment": "apppush-infra",
+      "eks_namespace": "pro",
+      "description": "app-push-infra Service",
+      "tags": [
+        "infrastructure",
+        "push"
+      ]
+    },
+    {
+      "service_id": "auth-api",
+      "newrelic_app_name": "Auth API",
+      "newrelic_app_id": "831620574",
+      "github_repo": "storehubnet/auth-api",
+      "eks_deployment": "auth-api",
+      "eks_namespace": "pro",
+      "description": "Auth API Service",
+      "tags": [
+        "api",
+        "authentication"
+      ]
+    },
+    {
+      "service_id": "backoffice-migrate-jobs",
+      "newrelic_app_name": "BackOffice-migrate-jobs",
+      "newrelic_app_id": "1026928768",
+      "github_repo": "storehubnet/backoffice-v1-web",
+      "eks_deployment": "backoffice-v1-web-migratejob",
+      "eks_namespace": "pro",
+      "description": "BackOffice-migrate-jobs Service",
+      "tags": [
+        "job"
+      ]
+    },
+    {
+      "service_id": "backoffice-public-api",
+      "newrelic_app_name": "Backoffice-public-api",
+      "newrelic_app_id": "1053455931",
+      "github_repo": "storehubnet/backoffice-v1-web",
+      "eks_deployment": "backoffice-v1-web-api",
+      "eks_namespace": "pro",
+      "description": "Backoffice-public-api Service",
+      "tags": [
+        "api"
+      ]
+    },
+    {
+      "service_id": "backoffice-scheduled-jobs",
+      "newrelic_app_name": "BackOffice Server",
+      "newrelic_app_id": "2183378",
+      "github_repo": "storehubnet/backoffice-v1-web",
+      "eks_deployment": "backoffice-v1-web-scheduledjob",
+      "eks_namespace": "pro",
+      "description": "BackOffice-scheduled-jobs Service",
+      "tags": [
+        "job"
+      ]
+    },
+    {
+      "service_id": "backoffice-server",
+      "newrelic_app_name": "BackOffice Server",
+      "newrelic_app_id": "2183378",
+      "github_repo": "storehubnet/backoffice-v1-web",
+      "eks_deployment": "backoffice-v1-web-app",
+      "eks_namespace": "pro",
+      "description": "BackOffice Server Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "backoffice-v2-bff",
+      "newrelic_app_name": "BackOfficeV2 BFF",
+      "newrelic_app_id": "622456081",
+      "github_repo": "storehubnet/backoffice-v2-bff",
+      "eks_deployment": "backoffice-v2-bff",
+      "eks_namespace": "pro",
+      "description": "BackOfficeV2 BFF Service",
+      "tags": [
+        "bff"
+      ]
+    },
+    {
+      "service_id": "beep-v1-web",
+      "newrelic_app_name": "Beep BFF",
+      "newrelic_app_id": "576367532",
+      "github_repo": "storehubnet/beep-v1-web",
+      "eks_deployment": "beep-v1-web",
+      "eks_namespace": "pro",
+      "description": "Beep Backend for Frontend",
+      "tags": [
+        "bff",
+        "mobile",
+        "api"
+      ]
+    },
+    {
+      "service_id": "campaign-svc",
+      "newrelic_app_name": "campaign-svc",
+      "newrelic_app_id": "1035358423",
+      "github_repo": "storehubnet/campaign-svc",
+      "eks_deployment": "campaign-svc",
+      "eks_namespace": "pro",
+      "description": "Campaign Management Service",
+      "tags": [
+        "grpc",
+        "campaign",
+        "marketing"
+      ]
+    },
+    {
+      "service_id": "core-api",
+      "newrelic_app_name": "Core API",
+      "newrelic_app_id": "456826027",
+      "github_repo": "storehubnet/core-api",
+      "eks_deployment": "core-api",
+      "eks_namespace": "pro",
+      "description": "Core API Service",
+      "tags": [
+        "api"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-beep",
+      "newrelic_app_name": "core-event-consumer-backOfficeAppJPush",
+      "newrelic_app_id": "1045709962",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-beep",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-backOfficeAppJPush Service",
+      "tags": [
+        "consumer",
+        "push",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-beepapp",
+      "newrelic_app_name": "core-event-consumer-beepAppPush",
+      "newrelic_app_id": "1045732906",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-beepapp",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-beepAppPush Service",
+      "tags": [
+        "consumer",
+        "push",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-bo",
+      "newrelic_app_name": "core-event-consumer-beepOrderStatus",
+      "newrelic_app_id": "1045726012",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-bo",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-beepOrderStatus Service",
+      "tags": [
+        "consumer",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-msg",
+      "newrelic_app_name": "core-event-consumer-messengerApp",
+      "newrelic_app_id": "992382190",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-msg",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-messengerApp Service",
+      "tags": [
+        "consumer",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-payment",
+      "newrelic_app_name": "core-event-consumer-paymentRefund",
+      "newrelic_app_id": "992370984",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-payment",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-paymentRefund Service",
+      "tags": [
+        "consumer",
+        "payment",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-sms",
+      "newrelic_app_name": "core-event-consumer-sms",
+      "newrelic_app_id": "1045719086",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-sms",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-sms Service",
+      "tags": [
+        "consumer",
+        "event"
+      ]
+    },
+    {
+      "service_id": "core-event-consumer-zendesk",
+      "newrelic_app_name": "core-event-consumer-zendesk",
+      "newrelic_app_id": "992398689",
+      "github_repo": "storehubnet/core-event-consumer",
+      "eks_deployment": "core-event-consumer-zendesk",
+      "eks_namespace": "pro",
+      "description": "core-event-consumer-zendesk Service",
+      "tags": [
+        "api",
+        "consumer",
+        "event"
+      ]
+    },
+    {
+      "service_id": "crm-api",
+      "newrelic_app_name": "CRM-API",
+      "newrelic_app_id": "642035607",
+      "github_repo": "storehubnet/crm-api",
+      "eks_deployment": "crm-api",
+      "eks_namespace": "pro",
+      "description": "Customer Relationship Management API",
+      "tags": [
+        "api",
+        "customer",
+        "loyalty"
+      ]
+    },
+    {
+      "service_id": "customers-svc",
+      "newrelic_app_name": "customers-svc",
+      "newrelic_app_id": "1038888592",
+      "github_repo": "storehubnet/customers-svc",
+      "eks_deployment": "customer-svc",
+      "eks_namespace": "pro",
+      "description": "customers-svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "e-invoice-adapter-svc",
+      "newrelic_app_name": "e-invoice_adapter-svc",
+      "newrelic_app_id": "1091895932",
+      "github_repo": "storehubnet/e-invoice_adapter-svc",
+      "eks_deployment": "e-invoice-adapter-svc",
+      "eks_namespace": "pro",
+      "description": "e-invoice_adapter-svc Service",
+      "tags": [
+        "service",
+        "adapter"
+      ]
+    },
+    {
+      "service_id": "ecommerce-v1-api",
+      "newrelic_app_name": "Ecommerce API",
+      "newrelic_app_id": "456055590",
+      "github_repo": "storehubnet/ecommerce-v1-api",
+      "eks_deployment": "ecommerce-v1-api",
+      "eks_namespace": "pro",
+      "description": "Main Ecommerce API",
+      "tags": [
+        "api",
+        "ecommerce",
+        "main"
+      ]
+    },
+    {
+      "service_id": "ecommerce-v1-consumer",
+      "newrelic_app_name": "ecommerce-v1-consumer",
+      "newrelic_app_id": "1073032970",
+      "github_repo": "storehubnet/ecommerce-v1-consumer",
+      "eks_deployment": "ec-v1-consumer",
+      "eks_namespace": "pro",
+      "description": "Ecommerce Consumer Service",
+      "tags": [
+        "consumer",
+        "api",
+        "ecommerce"
+      ]
+    },
+    {
+      "service_id": "ecommerce-v1-consumer-checkout",
+      "newrelic_app_name": "ecommerce-v1-consumer-checkout",
+      "newrelic_app_id": "1022636800",
+      "github_repo": "storehubnet/ecommerce-v1-consumer",
+      "eks_deployment": "ec-v1-consumer-checkout",
+      "eks_namespace": "pro",
+      "description": "Ecommerce Consumer Checkout Service",
+      "tags": [
+        "consumer",
+        "checkout",
+        "ecommerce"
+      ]
+    },
+    {
+      "service_id": "ecommerce-v1-consumer-order",
+      "newrelic_app_name": "ecommerce-v1-consumer-order",
+      "newrelic_app_id": "995539108",
+      "github_repo": "storehubnet/ecommerce-v1-consumer",
+      "eks_deployment": "ec-v1-consumer-order",
+      "eks_namespace": "pro",
+      "description": "ecommerce-v1-consumer-order Service",
+      "tags": [
+        "consumer"
+      ]
+    },
+    {
+      "service_id": "ecommerce-v1-web",
+      "newrelic_app_name": "Ecommerce Web",
+      "newrelic_app_id": "1053118445",
+      "github_repo": "storehubnet/ecommerce-v1-web",
+      "eks_deployment": "ecommerce-v1-web",
+      "eks_namespace": "pro",
+      "description": "Ecommerce Web Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "employee-domain-svc",
+      "newrelic_app_name": "Employee Domain Svc",
+      "newrelic_app_id": "1002456298",
+      "github_repo": "storehubnet/employee-domain-svc",
+      "eks_deployment": "employee-domain-svc",
+      "eks_namespace": "pro",
+      "description": "Employee Domain Svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "inventory-svc",
+      "newrelic_app_name": "inventory-svc",
+      "newrelic_app_id": "1052093737",
+      "github_repo": "storehubnet/inventory-svc",
+      "eks_deployment": "inventory-domain-svc",
+      "eks_namespace": "pro",
+      "description": "inventory-svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "ist-web",
+      "newrelic_app_name": "IST web",
+      "newrelic_app_id": "801921006",
+      "github_repo": "storehubnet/ist-v1-web",
+      "eks_deployment": "ist-v1-web",
+      "eks_namespace": "pro",
+      "description": "IST web Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "logistics-app-svc",
+      "newrelic_app_name": "Logistics App Svc",
+      "newrelic_app_id": "1013588354",
+      "github_repo": "storehubnet/logistics-app-svc",
+      "eks_deployment": "logistics-app-svc",
+      "eks_namespace": "pro",
+      "description": "Logistics App Svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "merchant-domain-svc",
+      "newrelic_app_name": "Merchant Domain Svc",
+      "newrelic_app_id": "718461111",
+      "github_repo": "storehubnet/merchant-domain-svc",
+      "eks_deployment": "merchant-domain-svc",
+      "eks_namespace": "pro",
+      "description": "Merchant Domain Svc Service",
+      "tags": [
+        "service",
+        "grpc"
+      ]
+    },
+    {
+      "service_id": "messenger-svc",
+      "newrelic_app_name": "Messenger SVC",
+      "newrelic_app_id": "1073033082",
+      "github_repo": "storehubnet/messenger_apps-infra-svc",
+      "eks_deployment": "messenger-apps-infra-svc",
+      "eks_namespace": "pro",
+      "description": "Messenger SVC Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "online-purchase-svc",
+      "newrelic_app_name": "online_purchase-svc",
+      "newrelic_app_id": "1053532194",
+      "github_repo": "sstorehubnet/online_purchase-svc",
+      "eks_deployment": "online-purchase-svc",
+      "eks_namespace": "pro",
+      "description": "Online Purchase Service",
+      "tags": [
+        "purchase",
+        "transaction",
+        "online"
+      ]
+    },
+    {
+      "service_id": "online-store-domain-svc",
+      "newrelic_app_name": "Online Store Domain Svc",
+      "newrelic_app_id": "1088829801",
+      "github_repo": "storehubnet/online_store-domain-svc",
+      "eks_deployment": "online-store-domain-svc",
+      "eks_namespace": "pro",
+      "description": "Online Store Domain Svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "otp-api",
+      "newrelic_app_name": "otp-api",
+      "newrelic_app_id": "690548060",
+      "github_repo": "storehubnet/otp-api",
+      "eks_deployment": "otp-api",
+      "eks_namespace": "pro",
+      "description": "One-Time Password API Service",
+      "tags": [
+        "otp",
+        "api",
+        "security",
+        "authentication"
+      ]
+    },
+    {
+      "service_id": "payment-api",
+      "newrelic_app_name": "payment-api",
+      "newrelic_app_id": "620391894",
+      "github_repo": "storehubnet/payment-api",
+      "eks_deployment": "payment-api",
+      "eks_namespace": "pro",
+      "description": "Payment API Service",
+      "tags": [
+        "payment",
+        "api",
+        "transaction"
+      ]
+    },
+    {
+      "service_id": "payout-api",
+      "newrelic_app_name": "payout-api",
+      "newrelic_app_id": "628365887",
+      "github_repo": "storehubnet/payout-api",
+      "eks_deployment": "payout-api",
+      "eks_namespace": "pro",
+      "description": "Payout API Service",
+      "tags": [
+        "payout",
+        "api",
+        "finance"
+      ]
+    },
+    {
+      "service_id": "pos-v3-bff",
+      "newrelic_app_name": "POS-V3-BFF",
+      "newrelic_app_id": "1008469748",
+      "github_repo": "storehubnet/pos-v3-bff",
+      "eks_deployment": "pos-v3-bff",
+      "eks_namespace": "pro",
+      "description": "POS-V3-BFF Service",
+      "tags": [
+        "bff"
+      ]
+    },
+    {
+      "service_id": "product-domain-svc",
+      "newrelic_app_name": "Product Domain Svc",
+      "newrelic_app_id": "718633074",
+      "github_repo": "storehubnet/product-domain-svc",
+      "eks_deployment": "product-domain-svc",
+      "eks_namespace": "pro",
+      "description": "Product Domain Svc Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "promotion-api",
+      "newrelic_app_name": "promotion-api",
+      "newrelic_app_id": "1004090426",
+      "github_repo": "storehubnet/promotion-api",
+      "eks_deployment": "promotion-api",
+      "eks_namespace": "pro",
+      "description": "Promotion API",
+      "tags": [
+        "promotion",
+        "api",
+        "marketing"
+      ]
+    },
+    {
+      "service_id": "promotion-svc",
+      "newrelic_app_name": "Promotion SVC",
+      "newrelic_app_id": "1007360320",
+      "github_repo": "storehubnet/promotion-svc",
+      "eks_deployment": "promotion-svc",
+      "eks_namespace": "pro",
+      "description": "Promotion SVC Service",
+      "tags": [
+        "service",
+        "promotion",
+        "discount",
+        "marketing"
+      ]
+    },
+    {
+      "service_id": "realtime-event-broker-svc",
+      "newrelic_app_name": "realtime_event_broker-svc",
+      "newrelic_app_id": "1043512435",
+      "github_repo": "storehubnet/realtime_event_broker-svc",
+      "eks_deployment": "realtime-event-broker-svc",
+      "eks_namespace": "pro",
+      "description": "Realtime Event Broker Service",
+      "tags": [
+        "event",
+        "realtime",
+        "broker"
+      ]
+    },
+    {
+      "service_id": "report-api",
+      "newrelic_app_name": "Report API",
+      "newrelic_app_id": "623906532",
+      "github_repo": "storehubnet/report-api",
+      "eks_deployment": "report-api",
+      "eks_namespace": "pro",
+      "description": "Report API Service",
+      "tags": [
+        "api",
+        "report"
+      ]
+    },
+    {
+      "service_id": "shmanager-v1-bff",
+      "newrelic_app_name": "SHManager-V1-BFF",
+      "newrelic_app_id": "822365650",
+      "github_repo": "storehubnet/shmanager-v1-bff",
+      "eks_deployment": "shmanager-v1-bff",
+      "eks_namespace": "pro",
+      "description": "SHManager-V1-BFF Service",
+      "tags": [
+        "bff"
+      ]
+    },
+    {
+      "service_id": "sms-api",
+      "newrelic_app_name": "sms-api",
+      "newrelic_app_id": "680450892",
+      "github_repo": "storehubnet/sms-api",
+      "eks_deployment": "sms-api",
+      "eks_namespace": "pro",
+      "description": "SMS API Service",
+      "tags": [
+        "sms",
+        "api",
+        "notification"
+      ]
+    },
+    {
+      "service_id": "storehub-sh-connector-service",
+      "newrelic_app_name": "StoreHub SH Connector Service",
+      "newrelic_app_id": "1054683071",
+      "github_repo": "storehubnet/StoreHub-SH-Connector-Service",
+      "eks_deployment": null,
+      "eks_namespace": "pro",
+      "k8s_mapping_status": "missing",
+      "description": "StoreHub SH Connector Service Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "subscription-adapter-infra-svc",
+      "newrelic_app_name": "subscription_adapter-infra-svc",
+      "newrelic_app_id": "981461197",
+      "github_repo": "storehubnet/subscription_adapter-infra-svc",
+      "eks_deployment": "sub-adapter-infra-svc",
+      "eks_namespace": "pro",
+      "description": "Subscription Adapter Infrastructure Service",
+      "tags": [
+        "subscription",
+        "adapter",
+        "infrastructure"
+      ]
+    },
+    {
+      "service_id": "subscription-app-svc",
+      "newrelic_app_name": "Subscription App SVC",
+      "newrelic_app_id": "980840317",
+      "github_repo": "storehubnet/subscription-app-svc",
+      "eks_deployment": "subscription-app-svc",
+      "eks_namespace": "pro",
+      "description": "Subscription App SVC Service",
+      "tags": [
+        "service"
+      ]
+    },
+    {
+      "service_id": "user-preference-api",
+      "newrelic_app_name": "User Preference API",
+      "newrelic_app_id": "824884886",
+      "github_repo": "storehubnet/user_preference-api",
+      "eks_deployment": "user-preference-api",
+      "eks_namespace": "pro",
+      "description": "User Preference API Service",
+      "tags": [
+        "api"
+      ]
+    },
+    {
+      "service_id": "webhook-svc",
+      "newrelic_app_name": "webhook-svc",
+      "newrelic_app_id": "1075684325",
+      "github_repo": "storehubnet/webhook-svc",
+      "eks_deployment": "webhook-svc",
+      "eks_namespace": "pro",
+      "description": "Webhook Service",
+      "tags": [
+        "webhook",
+        "integration",
+        "event"
+      ]
+    }
+  ],
+  "databases": [
+    {
+      "database_id": "mongodb-primary",
+      "type": "MongoDB",
+      "newrelic_name": "MongoDB",
+      "collections": [
+        "businesses",
+        "transactionrecords",
+        "customers",
+        "pendingloyaltyqrscans",
+        "transactionstatistics",
+        "transactionloyalties",
+        "loyaltychangelogs",
+        "onlinetransactions",
+        "merchantcashbackdaycounts",
+        "products",
+        "membershiptiers"
+      ],
+      "connection_string_env": "MONGODB_URI",
+      "description": "Primary MongoDB database"
+    },
+    {
+      "database_id": "redis-primary",
+      "type": "Redis",
+      "newrelic_name": "Redis",
+      "purpose": [
+        "cache",
+        "pubsub"
+      ],
+      "connection_string_env": "REDIS_URL",
+      "description": "Primary Redis instance for caching and pub/sub"
+    }
+  ],
+  "metadata": {
+    "version": "1.1.0",
+    "last_updated": "2025-08-25",
+    "description": "Service registry for mapping NewRelic app names to GitHub repos and EKS deployments"
+  }
+}
