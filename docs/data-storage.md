@@ -22,6 +22,7 @@
 | SLO 建议 | 需要审核状态和历史版本 | PostgreSQL |
 | incident timeline | 结构化事件，查询频繁 | PostgreSQL |
 | incident trace evidence | 按需 New Relic trace 摘要和 RCA 证据 | PostgreSQL |
+| incident inspect result/feedback | 异步 inspect 状态、结果、summary、timeline、人工反馈 | PostgreSQL |
 | transaction baseline | New Relic transaction 级 latency baseline | PostgreSQL |
 | New Relic/Prometheus 查询原始响应 | 体积较大，不常查 | S3 |
 | Agent 生成的长报告 | 文本较长，审计用 | S3 + PostgreSQL metadata |
@@ -238,6 +239,49 @@ create table incident_trace_evidence (
 );
 ```
 
+### `incident_inspections`
+
+保存 incident inspect v2 的请求、异步状态、最终结果、摘要和 timeline。
+
+```sql
+create table incident_inspections (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  status text not null default 'queued',
+  attempts int not null default 0,
+  since timestamptz not null,
+  until timestamptz not null,
+  baseline_version text,
+  request jsonb not null default '{}',
+  summary text,
+  timeline jsonb not null default '[]',
+  result jsonb not null default '{}',
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+### `incident_inspection_feedback`
+
+保存人工确认的根因、正确假设和使用评分，用于后续优化 hypothesis ranking。
+
+```sql
+create table incident_inspection_feedback (
+  id bigserial primary key,
+  inspection_id bigint not null references incident_inspections(id),
+  service_id text not null references services(service_id),
+  confirmed_root_cause text,
+  correct_hypothesis text,
+  usefulness int,
+  note text,
+  payload jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+```
+
 ### `transaction_baselines`
 
 保存服务内 transaction 级 latency baseline，用于 incident inspect 中回答
@@ -333,6 +377,7 @@ flowchart TD
     Label --> SLO["Write slo_recommendations"]
     Postgres --> Trace["On-demand incident trace inspect"]
     Trace --> TraceStore["Write incident_trace_evidence"]
+    Trace --> InspectStore["Write incident_inspections / feedback"]
     Postgres --> Export["Export training dataset to S3"]
 ```
 
@@ -345,6 +390,8 @@ flowchart TD
 | `service_baselines` | 12-24 个月，按 version 保留 |
 | `anomaly_windows` | 24 个月或永久 |
 | `incident_windows` | 永久 |
+| `incident_inspections` | 12-24 个月 |
+| `incident_inspection_feedback` | 永久 |
 | `slo_recommendations` | 永久 |
 | S3 raw snapshots | 30-90 天，按成本控制 |
 | S3 reports / training exports | 12-24 个月 |

@@ -85,6 +85,8 @@ curl http://127.0.0.1:8080/config
 curl http://127.0.0.1:8080/runner/status
 curl 'http://127.0.0.1:8080/runner/runs?limit=10'
 curl 'http://127.0.0.1:8080/collection/jobs?limit=20'
+curl 'http://127.0.0.1:8080/data/coverage?lookback_hours=24'
+curl 'http://127.0.0.1:8080/gaps?lookback_hours=24&limit=20'
 ```
 
 `/runner/status` reports scheduler settings, `worker_running`, `current_job`,
@@ -94,6 +96,10 @@ curl 'http://127.0.0.1:8080/collection/jobs?limit=20'
 timestamps. `/collection/jobs` shows per-window/service chunk status, attempts,
 return code, rows emitted/written, errors, and elapsed seconds. Use
 `?status=failed`, `?status=queued`, or `?status=running` to filter jobs.
+
+`/data/coverage` summarizes expected versus collected service/window points.
+`/gaps` returns incomplete windows and the service ids that need recovery. Both
+accept `since`, `until`, `lookback_hours`, `service_id`, and `window_size`.
 
 ## Check Collection Progress
 
@@ -167,11 +173,55 @@ curl -X POST http://127.0.0.1:8080/anomalies/mark \
   -d '{"service_ids":["backoffice-v2-bff"]}'
 
 curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?lookback_hours=6'
+
+curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?since=2026-06-15T02:00:00Z&until=2026-06-15T04:00:00Z'
 ```
 
 `/baseline/recompute_transactions` stores New Relic Transaction p50/p95/p99
 baselines in `transaction_baselines` so incident inspect can report transaction
 latency deviation percentages.
+
+Risk v2 includes persisted trace transaction deviations when recent
+`incident_trace_evidence` overlaps the risk window. It does not query New Relic
+live during normal risk reads.
+
+## Incident Inspect V2
+
+Synchronous inspect still returns the result directly:
+
+```bash
+curl -X POST http://127.0.0.1:8080/inspect/incident \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "service_id": "backoffice-v2-bff",
+    "since": "2026-06-15T02:00:00Z",
+    "until": "2026-06-15T04:00:00Z",
+    "include_trace": true
+  }'
+```
+
+For trace-heavy investigations, enqueue async inspect:
+
+```bash
+curl -X POST http://127.0.0.1:8080/inspect/incident \
+  -H 'Content-Type: application/json' \
+  -d '{"service_id":"backoffice-v2-bff","async":true,"include_trace":true}'
+
+curl http://127.0.0.1:8080/inspect/incident/1
+```
+
+Submit feedback after a human confirms the root cause:
+
+```bash
+curl -X POST http://127.0.0.1:8080/inspect/incident/1/feedback \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "confirmed_root_cause": "downstream dependency latency",
+    "correct_hypothesis": "downstream_dependency_latency",
+    "usefulness": 4,
+    "note": "Trace external hotspot pointed to the right host."
+  }'
+```
 
 ## Common Failures
 

@@ -17,7 +17,7 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Dynamic service baselines | Done | `service_baselines` supports service-specific metric baselines |
 | Transaction baselines | Done, manual | `transaction_baselines` built for 52 services, 1403 rows total |
 | Risk scoring v1 | Working | Rule-based scoring from recent 15m windows and service baselines |
-| Incident inspect v1 | Working | Returns windows, hypotheses, trace evidence, and recommended next actions |
+| Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
 | Launchd local runtime | Added | `ops/launchd` can keep local service and tunnel alive |
 
 ## Known Issues Found During Testing
@@ -25,31 +25,31 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Priority | Issue | Impact | Current workaround |
 | --- | --- | --- | --- |
 | P0 | Collector worker is single-threaded | Large backlog still drains slowly, although API no longer blocks | Add concurrency limits and per-source timeout budgets |
-| P1 | No `/data/coverage` and `/gaps` APIs yet | Operators still need SQL for coverage summaries | Use `/runner/runs`, `/collection/jobs`, and coverage SQL |
-| P1 | Inspect nested `risk` is not aligned to `since/until` | Inspect may show `risk=unknown` while inspected windows have anomalies | Use `windows` and `hypotheses` as source of truth for now |
-| P1 | Risk score does not include trace/transaction baseline | Slow transaction deviations are visible in inspect, but not risk | Use inspect for transaction-level analysis |
+| P1 | Logs/error groups are not integrated into inspect response | RCA may miss log-only failures | Add New Relic logs/error groups to inspect v3 |
+| P1 | Async inspect worker is in-process | Production should separate long trace work from API replicas | Deploy supervised worker or Kubernetes worker replica |
 | P1 | Local Kubernetes access depends on jumpserver tunnel/VPN routing | K8s evidence fails when tunnel or route is down | Run tunnel or deploy agent inside cluster |
 | P1 | Direct OpenVPN route can miss EKS private API IPs | `kubectl` timed out when `192.168.4.238/192.168.5.105` routed via `en0` | Add `192.168.0.0/16` route through OpenVPN or use tunnel |
 | P1 | Transaction baseline is manual | Runner does not refresh it automatically | Call `/baseline/recompute_transactions` manually |
 | P2 | Owner/SLO values are inferred | Catalog is usable but not authoritative | Service owner review required |
 | P2 | Some services have zero transaction baseline rows | Three services returned zero New Relic Transaction rows | Treat as no transaction evidence, not API failure |
 | P2 | Trace evidence is summary-level | It is not a full waterfall or span graph | Use trace hotspots as direction, verify in New Relic |
-| P2 | Logs/error groups are not integrated into inspect response | RCA may miss log-only failures | Add New Relic logs/error groups to inspect v2 |
 
 ## Risk Scoring V2 Backlog
 
 ### 1. Include Transaction Baseline in Risk
 
-Status: pending
+Status: working
 
 Current limitation:
 
-- Transaction baseline is only used by `inspect/incident` trace evidence.
-- `/risk/score` does not know whether a hot transaction is above or below its historical baseline.
+- Risk v2 uses persisted `incident_trace_evidence` transaction deviations when
+  trace evidence overlaps the risk window.
+- Risk does not query New Relic live during normal reads, so transaction risk is
+  only present after inspect/high-risk drill-down has generated trace evidence.
 
 Implementation notes:
 
-- Add a lightweight transaction signal collector for top transactions in the latest window.
+- Optional next step: add a lightweight transaction signal collector for top transactions in the latest window.
 - Compare transaction p95/p99/avg against `transaction_baselines`.
 - Add risk evidence:
   - `newrelic.transaction_latency_p95`
@@ -173,20 +173,16 @@ Acceptance criteria:
 
 | Priority | Task | Status |
 | --- | --- | --- |
-| P0 | Persist inspect requests/results in `incident_inspections` | pending |
-| P0 | Make inspect asynchronous for trace/log-heavy requests | pending |
-| P1 | Add concise `summary` and `timeline` fields to response | pending |
-| P1 | Fix nested `risk` to use inspect `since/until` or remove it | pending |
 | P1 | Add New Relic logs and error groups | pending |
 | P1 | Add dependency classification from trace hotspots | pending |
 | P2 | Add data quality section explaining missing/partial signals | pending |
-| P2 | Add feedback endpoint for confirmed root cause | pending |
+| P2 | Use incident feedback to tune hypothesis ranking weights | pending |
+| P2 | Add persisted inspect worker concurrency limits | pending |
 
 ## Runner / Data Quality Backlog
 
 | Priority | Task | Status |
 | --- | --- | --- |
-| P0 | Add `/data/coverage` and `/gaps` APIs | pending |
 | P1 | Support manual targeted retry by existing failed `collection_jobs.id` | pending |
 | P1 | Add collector concurrency limits and per-source timeout budgets | pending |
 | P2 | Add daily baseline refresh job | pending |
@@ -228,6 +224,16 @@ Acceptance criteria:
   - targets missing or failed service ids instead of blindly recollecting full ranges;
   - treats skipped Kubernetes inspect as incomplete for recovery.
 - Added worker restart recovery for interrupted `running` jobs.
+- Added `/data/coverage` and `/gaps`.
+- Fixed inspect nested risk to use the exact inspect `since/until` window.
+- Added risk v2 transaction-baseline evidence from persisted New Relic trace summaries.
+- Added incident inspect v2:
+  - persisted `incident_inspections`;
+  - async inspect worker;
+  - `summary` and `timeline`;
+  - `GET /inspect/incident/{id}`;
+  - `POST /inspect/incident/{id}/feedback`;
+  - persisted `incident_inspection_feedback`.
 - Added `transaction_baselines` table.
 - Added `POST /baseline/recompute_transactions`.
 - Built full transaction baseline:

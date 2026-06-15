@@ -198,6 +198,46 @@ create table if not exists incident_trace_evidence (
 create index if not exists incident_trace_evidence_service_time_idx
   on incident_trace_evidence (service_id, window_start desc);
 
+create table if not exists incident_inspections (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  status text not null default 'queued',
+  attempts int not null default 0,
+  since timestamptz not null,
+  until timestamptz not null,
+  baseline_version text,
+  request jsonb not null default '{}',
+  summary text,
+  timeline jsonb not null default '[]',
+  result jsonb not null default '{}',
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists incident_inspections_service_time_idx
+  on incident_inspections (service_id, created_at desc);
+
+create index if not exists incident_inspections_status_idx
+  on incident_inspections (status, created_at);
+
+create table if not exists incident_inspection_feedback (
+  id bigserial primary key,
+  inspection_id bigint not null references incident_inspections(id),
+  service_id text not null references services(service_id),
+  confirmed_root_cause text,
+  correct_hypothesis text,
+  usefulness int,
+  note text,
+  payload jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists incident_inspection_feedback_lookup_idx
+  on incident_inspection_feedback (inspection_id, created_at desc);
+
 create table if not exists slo_recommendations (
   id bigserial primary key,
   service_id text not null references services(service_id),

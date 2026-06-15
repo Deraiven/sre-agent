@@ -33,6 +33,8 @@ METRIC_NAMES = [
     "kubernetes.ready_ratio",
 ]
 
+WINDOW_SECONDS = {"5m": 300, "15m": 900, "1h": 3600}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -47,6 +49,12 @@ def parse_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def align_floor(value: datetime, window_size: str = "15m") -> datetime:
+    seconds = WINDOW_SECONDS.get(window_size, 900)
+    timestamp = int(value.astimezone(timezone.utc).timestamp())
+    return datetime.fromtimestamp(timestamp - (timestamp % seconds), tz=timezone.utc)
 
 
 def percentile(values: list[float], pct: float) -> float | None:
@@ -444,18 +452,109 @@ def risk_from_scores(scores: list[int]) -> tuple[int, str]:
     return score, "low"
 
 
+def _risk_level(score: int) -> str:
+    if score >= 80:
+        return "critical"
+    if score >= 55:
+        return "high"
+    if score >= 25:
+        return "medium"
+    if score > 0:
+        return "low"
+    return "unknown"
+
+
+def load_recent_trace_summaries(
+    database_url: str,
+    service_id: str,
+    since: datetime,
+    until: datetime,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    sql = f"""
+select coalesce(json_agg(row_to_json(t) order by created_at desc), '[]'::json)
+from (
+  select id, window_start, window_end, status, trace_summary, errors, created_at
+  from incident_trace_evidence
+  where service_id = {sql_literal(service_id)}
+    and window_start < {sql_literal(format_time(until))}
+    and window_end > {sql_literal(format_time(since))}
+  order by created_at desc
+  limit {max(1, min(limit, 20))}
+) t;
+"""
+    return psql_json(database_url, sql) or []
+
+
+def score_transaction_baseline_risk(trace_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    evidence: list[dict[str, Any]] = []
+    points = 0
+    matched_transactions = 0
+    for trace_row in trace_summaries:
+        trace_summary = trace_row.get("trace_summary") or {}
+        for item in trace_summary.get("top_slow_transactions", []) or []:
+            if item.get("baseline_status") != "matched":
+                continue
+            matched_transactions += 1
+            transaction_name = item.get("name") or item.get("facet")
+            p95_ratio = item.get("p95_vs_baseline_ratio")
+            p99_ratio = item.get("p99_vs_baseline_ratio")
+            avg_ratio = item.get("avg_vs_baseline_ratio")
+            ratio_candidates = [
+                value for value in [p95_ratio, p99_ratio, avg_ratio] if isinstance(value, (int, float))
+            ]
+            if not ratio_candidates:
+                continue
+            ratio = max(ratio_candidates)
+            transaction_points = 0
+            if ratio >= 3:
+                transaction_points = 35
+            elif ratio >= 2:
+                transaction_points = 25
+            elif ratio >= 1.5:
+                transaction_points = 15
+            elif ratio >= 1.25:
+                transaction_points = 8
+            if transaction_points <= 0:
+                continue
+            points += transaction_points
+            evidence.append(
+                {
+                    "source": "incident_trace_evidence",
+                    "metric": "newrelic.transaction_latency_vs_baseline",
+                    "transaction": transaction_name,
+                    "points": transaction_points,
+                    "max_baseline_ratio": ratio,
+                    "p95_vs_baseline_pct": item.get("p95_vs_baseline_pct"),
+                    "p99_vs_baseline_pct": item.get("p99_vs_baseline_pct"),
+                    "avg_vs_baseline_pct": item.get("avg_vs_baseline_pct"),
+                    "baseline": item.get("baseline"),
+                    "trace_window_start": trace_row.get("window_start"),
+                    "trace_window_end": trace_row.get("window_end"),
+                }
+            )
+    return {
+        "score": min(points, 100),
+        "matched_transactions": matched_transactions,
+        "evidence": sorted(evidence, key=lambda item: item["points"], reverse=True)[:10],
+    }
+
+
 def score_service_risk(
     database_url: str,
     service_id: str,
     lookback_hours: int = 6,
     baseline_version: str = BASELINE_VERSION,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    risk_version: str = "risk-v2",
 ) -> dict[str, Any]:
-    until = utc_now()
-    since = until - timedelta(hours=lookback_hours)
+    until = until or utc_now()
+    since = since or (until - timedelta(hours=lookback_hours))
     baselines = load_baseline_map(database_url, service_id, baseline_version)
     rows = load_metric_windows(database_url, service_id=service_id, since=since, until=until)
     evaluations = [evaluate_window(row, baselines) for row in rows]
-    score, level = risk_from_scores([item["score"] for item in evaluations])
+    base_score, _ = risk_from_scores([item["score"] for item in evaluations])
     top_evidence: list[dict[str, Any]] = []
     for item in sorted(evaluations, key=lambda row: row["score"], reverse=True):
         for evidence in item["evidence"]:
@@ -465,15 +564,182 @@ def score_service_risk(
                 break
         if len(top_evidence) >= 10:
             break
+    transaction_risk = score_transaction_baseline_risk(
+        load_recent_trace_summaries(database_url, service_id, since=since, until=until)
+    )
+    score = min(100, max(base_score, round(base_score * 0.75 + transaction_risk["score"] * 0.5)))
+    if transaction_risk["evidence"]:
+        score = min(100, max(score, min(100, transaction_risk["score"])))
+        top_evidence = (transaction_risk["evidence"] + top_evidence)[:10]
+    level = _risk_level(score)
     return {
         "service_id": service_id,
         "risk_score": score,
         "risk_level": level,
+        "risk_version": risk_version,
         "lookback_hours": lookback_hours,
+        "since": format_time(since),
+        "until": format_time(until),
         "baseline_version": baseline_version,
         "window_count": len(evaluations),
         "latest_window": evaluations[-1] if evaluations else None,
+        "base_window_risk_score": base_score,
+        "transaction_baseline_risk": transaction_risk,
         "top_evidence": top_evidence,
+    }
+
+
+def data_coverage(
+    database_url: str,
+    since: datetime,
+    until: datetime,
+    service_id: str | None = None,
+    window_size: str = "15m",
+) -> dict[str, Any]:
+    step_seconds = WINDOW_SECONDS.get(window_size, 900)
+    since = align_floor(since, window_size)
+    until = align_floor(until, window_size)
+    if until <= since:
+        until = since + timedelta(seconds=step_seconds)
+    service_filter = f"where service_id = {sql_literal(service_id)}" if service_id else ""
+    actual_service_filter = f"and service_id = {sql_literal(service_id)}" if service_id else ""
+    sql = f"""
+with service_scope as (
+  select service_id from services {service_filter}
+),
+service_count as (
+  select count(*)::int as expected from service_scope
+),
+expected_windows as (
+  select generate_series(
+    {sql_literal(format_time(since))}::timestamptz,
+    {sql_literal(format_time(until - timedelta(seconds=step_seconds)))}::timestamptz,
+    interval '{step_seconds} seconds'
+  ) as window_start
+),
+actual as (
+  select *
+  from service_metric_windows
+  where window_size = {sql_literal(window_size)}
+    and window_start >= {sql_literal(format_time(since))}
+    and window_start < {sql_literal(format_time(until))}
+    {actual_service_filter}
+)
+select coalesce(json_agg(row_to_json(x) order by x.window_start), '[]'::json)
+from (
+  select
+    w.window_start,
+    w.window_start + interval '{step_seconds} seconds' as window_end,
+    sc.expected,
+    count(a.*)::int as rows,
+    count(a.*) filter (where a.newrelic->>'status' = 'collected')::int as newrelic_collected,
+    count(a.*) filter (where coalesce(a.prometheus_resources->>'status', 'collected') in ('collected', 'missing'))::int as prometheus_ok,
+    count(a.*) filter (where a.kubernetes->>'status' in ('collected', 'missing'))::int as kubernetes_ok,
+    count(a.*) filter (where coalesce(a.data_quality->'errors', '[]'::jsonb) <> '[]'::jsonb)::int as data_quality_errors
+  from expected_windows w
+  cross join service_count sc
+  left join actual a on a.window_start = w.window_start
+  group by w.window_start, sc.expected
+) x;
+"""
+    windows = psql_json(database_url, sql) or []
+    expected_points = sum(row.get("expected") or 0 for row in windows)
+    actual_points = sum(row.get("rows") or 0 for row in windows)
+    complete_windows = sum(1 for row in windows if row.get("expected") and row.get("rows") >= row.get("expected"))
+    return {
+        "since": format_time(since),
+        "until": format_time(until),
+        "window_size": window_size,
+        "service_id": service_id,
+        "windows": windows,
+        "summary": {
+            "window_count": len(windows),
+            "complete_windows": complete_windows,
+            "expected_points": expected_points,
+            "actual_points": actual_points,
+            "coverage_pct": (actual_points / expected_points * 100) if expected_points else None,
+        },
+    }
+
+
+def data_gaps(
+    database_url: str,
+    since: datetime,
+    until: datetime,
+    service_id: str | None = None,
+    window_size: str = "15m",
+    limit: int = 100,
+) -> dict[str, Any]:
+    step_seconds = WINDOW_SECONDS.get(window_size, 900)
+    since = align_floor(since, window_size)
+    until = align_floor(until, window_size)
+    if until <= since:
+        until = since + timedelta(seconds=step_seconds)
+    service_filter = f"where service_id = {sql_literal(service_id)}" if service_id else ""
+    actual_service_filter = f"and service_id = {sql_literal(service_id)}" if service_id else ""
+    sql = f"""
+with service_scope as (
+  select service_id from services {service_filter}
+),
+expected_windows as (
+  select generate_series(
+    {sql_literal(format_time(since))}::timestamptz,
+    {sql_literal(format_time(until - timedelta(seconds=step_seconds)))}::timestamptz,
+    interval '{step_seconds} seconds'
+  ) as window_start
+),
+actual as (
+  select service_id, window_start, newrelic->>'status' as newrelic_status,
+         kubernetes->>'status' as kubernetes_status,
+         coalesce(data_quality->'errors', '[]'::jsonb) as data_quality_errors
+  from service_metric_windows
+  where window_size = {sql_literal(window_size)}
+    and window_start >= {sql_literal(format_time(since))}
+    and window_start < {sql_literal(format_time(until))}
+    {actual_service_filter}
+),
+coverage as (
+  select
+    w.window_start,
+    s.service_id,
+    a.newrelic_status,
+    a.kubernetes_status,
+    a.data_quality_errors,
+    case
+      when a.service_id is null then true
+      when coalesce(a.newrelic_status, '') <> 'collected' then true
+      when coalesce(a.kubernetes_status, '') not in ('collected', 'missing') then true
+      when coalesce(a.data_quality_errors, '[]'::jsonb) <> '[]'::jsonb then true
+      else false
+    end as has_gap
+  from expected_windows w
+  cross join service_scope s
+  left join actual a on a.window_start = w.window_start and a.service_id = s.service_id
+)
+select coalesce(json_agg(row_to_json(x) order by x.priority, x.window_start desc), '[]'::json)
+from (
+  select
+    window_start,
+    window_start + interval '{step_seconds} seconds' as window_end,
+    count(*)::int as expected,
+    count(*) filter (where not has_gap)::int as healthy,
+    array_agg(service_id order by service_id) filter (where has_gap) as service_ids,
+    case when count(*) filter (where not has_gap) > 0 then 0 else 1 end as priority
+  from coverage
+  group by window_start
+  having count(*) filter (where has_gap) > 0
+  order by priority, window_start desc
+  limit {max(1, min(limit, 500))}
+) x;
+"""
+    gaps = psql_json(database_url, sql) or []
+    return {
+        "since": format_time(since),
+        "until": format_time(until),
+        "window_size": window_size,
+        "service_id": service_id,
+        "gap_count": len(gaps),
+        "gaps": gaps,
     }
 
 
@@ -653,7 +919,14 @@ def rank_incident_hypotheses(
         "since": format_time(since),
         "until": format_time(until),
         "baseline_version": baseline_version,
-        "risk": score_service_risk(database_url, service_id, lookback_hours=max(1, math.ceil((until - since).total_seconds() / 3600))),
+        "risk": score_service_risk(
+            database_url,
+            service_id,
+            lookback_hours=max(1, math.ceil((until - since).total_seconds() / 3600)),
+            baseline_version=baseline_version,
+            since=since,
+            until=until,
+        ),
         "trace_evidence": trace_evidence,
         "hypotheses": ranked,
         "windows": evaluations,

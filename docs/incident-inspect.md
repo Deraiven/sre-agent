@@ -29,10 +29,54 @@ curl -X POST http://127.0.0.1:8080/inspect/incident \
 | `include_trace` | no | `true` | Query New Relic trace evidence on demand |
 | `trace_expand_minutes` | no | `30` | Expand trace query before/after incident window |
 | `baseline_version` | no | `baseline-v1` | Baseline version for anomaly scoring |
+| `async` | no | `false` | Queue inspect and return an inspection id |
 
 Trace inspection requires `NEW_RELIC_API_KEY`. If the key is missing or a trace
 query fails, incident inspect still returns metric/Kubernetes hypotheses and
 adds the trace failure to observability evidence.
+
+## Incident Inspect V2
+
+Inspect v2 persists every ranked inspection in `incident_inspections`. The
+response contains:
+
+| Field | Meaning |
+| --- | --- |
+| `inspection_id` | Persistent inspection id |
+| `summary` | One-line human-readable result |
+| `timeline` | Ordered anomaly/evidence/trace events |
+| `risk` | Risk v2 calculated for the exact inspect `since/until` window |
+| `hypotheses` | Ranked root-cause hypotheses and next actions |
+| `trace_evidence` | Best-effort New Relic trace summary |
+
+Async inspect avoids blocking the API while trace queries run:
+
+```bash
+curl -X POST http://127.0.0.1:8080/inspect/incident \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "service_id": "backoffice-v2-bff",
+    "since": "2026-06-08T02:45:00Z",
+    "until": "2026-06-08T03:00:00Z",
+    "include_trace": true,
+    "async": true
+  }'
+
+curl http://127.0.0.1:8080/inspect/incident/1
+```
+
+Human feedback is stored in `incident_inspection_feedback`:
+
+```bash
+curl -X POST http://127.0.0.1:8080/inspect/incident/1/feedback \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "confirmed_root_cause": "database connection pool saturation",
+    "correct_hypothesis": "database_latency",
+    "usefulness": 5,
+    "note": "The DB hotspot evidence matched the final RCA."
+  }'
+```
 
 ## Current Evidence Sources
 
@@ -122,10 +166,30 @@ limit 5;
 The `trace_summary` JSON contains the raw summarized NRQL results and the exact
 queries used, which makes RCA reports auditable.
 
-## Known V1 Limitations
+Each ranked inspect also writes a row to `incident_inspections`:
+
+```sql
+select id, service_id, status, summary, created_at, finished_at
+from incident_inspections
+order by created_at desc
+limit 5;
+```
+
+Feedback can be reviewed with:
+
+```sql
+select inspection_id, correct_hypothesis, usefulness, note, created_at
+from incident_inspection_feedback
+order by created_at desc
+limit 5;
+```
+
+## Known V2 Limitations
 
 - Trace evidence is a summary, not a full trace waterfall.
 - Trace query field names differ by instrumentation; missing fields are expected.
 - Dependency names come from New Relic span attributes and may be URLs, hostnames,
   or gRPC target strings.
 - Logs and error groups are not yet integrated into the same inspect response.
+- Async inspect worker is in-process; production deployment should run it as a
+  supervised worker or Kubernetes replica with clear concurrency limits.

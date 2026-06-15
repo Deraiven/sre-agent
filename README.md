@@ -108,8 +108,10 @@ curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/runner/status
 curl 'http://127.0.0.1:8080/runner/runs?limit=10'
 curl 'http://127.0.0.1:8080/collection/jobs?limit=20'
+curl 'http://127.0.0.1:8080/data/coverage?lookback_hours=24'
+curl 'http://127.0.0.1:8080/gaps?lookback_hours=24&limit=20'
 curl http://127.0.0.1:8080/services
-curl http://127.0.0.1:8080/services/auth-api/risk
+curl 'http://127.0.0.1:8080/services/auth-api/risk?lookback_hours=6'
 
 curl -X POST http://127.0.0.1:8080/collect/run \
   -H 'Content-Type: application/json' \
@@ -134,6 +136,12 @@ curl -X POST http://127.0.0.1:8080/risk/score \
 curl -X POST http://127.0.0.1:8080/inspect/incident \
   -H 'Content-Type: application/json' \
   -d '{"service_id":"auth-api","limit":8,"include_trace":true}'
+
+curl -X POST http://127.0.0.1:8080/inspect/incident \
+  -H 'Content-Type: application/json' \
+  -d '{"service_id":"auth-api","async":true,"limit":8,"include_trace":true}'
+
+curl http://127.0.0.1:8080/inspect/incident/1
 ```
 
 The first intelligence layer is deliberately rule-based:
@@ -144,10 +152,12 @@ The first intelligence layer is deliberately rule-based:
   baselines so trace inspect can report slow transaction deviation percentages.
 - `runner/runs` and `collection/jobs` expose collection audit state, job
   failures, retries, elapsed seconds, and rows written.
+- `data/coverage` and `gaps` expose coverage and missing/incomplete windows
+  without writing SQL by hand.
 - `anomalies/mark` labels windows by comparing New Relic, Prometheus, and
   Kubernetes signals against the baseline.
-- `risk/score` computes the current service risk from recent window scores.
-- `inspect/incident` ranks likely incident hypotheses and returns supporting
-  evidence plus a recommended next action. By default it also performs
-  on-demand New Relic trace inspection for the requested incident window and
-  stores the trace summary in `incident_trace_evidence`.
+- `risk/score` computes risk v2 from recent window scores plus persisted New
+  Relic transaction baseline deviations when trace evidence exists.
+- `inspect/incident` supports synchronous and asynchronous incident inspection.
+  It persists inspect requests/results, returns `summary` and `timeline`, and
+  accepts feedback for confirmed root cause learning.
