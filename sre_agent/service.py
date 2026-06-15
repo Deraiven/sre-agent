@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from .config import load_config
 from .db import psql_json, sql_text
 from .intelligence import build_baselines, mark_anomalies, rank_incident_hypotheses, score_service_risk, utc_now
-from .newrelic_trace import collect_service_trace_evidence
+from .newrelic_trace import build_transaction_baselines, collect_service_trace_evidence
 from .runner import ScheduledRunner, parse_time, result_to_dict
 
 
@@ -61,6 +61,39 @@ class AgentRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/runner/status":
                 self._send_json(HTTPStatus.OK, self.runner.status())
+                return
+            if path == "/runner/runs":
+                limit = max(1, min(int((query.get("limit") or ["20"])[0]), 100))
+                sql = f"""
+select coalesce(json_agg(row_to_json(r) order by started_at desc), '[]'::json)
+from (
+  select id, run_type, status, window_start, window_end, scan_start, scan_end,
+         jobs_enqueued, jobs_succeeded, jobs_failed, metadata, error,
+         started_at, finished_at
+  from runner_runs
+  order by started_at desc
+  limit {limit}
+) r;
+"""
+                self._send_json(HTTPStatus.OK, {"runner_runs": psql_json(self.runner.config.database_url, sql)})
+                return
+            if path == "/collection/jobs":
+                limit = max(1, min(int((query.get("limit") or ["50"])[0]), 200))
+                status_filter = (query.get("status") or [None])[0]
+                where = f"where status = '{sql_text(status_filter)}'" if status_filter else ""
+                sql = f"""
+select coalesce(json_agg(row_to_json(j) order by created_at desc), '[]'::json)
+from (
+  select id, runner_run_id, job_type, status, priority, window_start, window_end,
+         window_size, service_ids, dry_run, attempts, returncode, error,
+         rows_emitted, rows_written, elapsed_seconds, created_at, started_at, finished_at
+  from collection_jobs
+  {where}
+  order by created_at desc
+  limit {limit}
+) j;
+"""
+                self._send_json(HTTPStatus.OK, {"collection_jobs": psql_json(self.runner.config.database_url, sql)})
                 return
             if path == "/services":
                 sql = """
@@ -112,7 +145,11 @@ from (
                     service_ids=service_ids,
                     dry_run=bool(payload.get("dry_run", False)),
                 )
-                status = HTTPStatus.ACCEPTED if result.status in {"succeeded", "busy"} else HTTPStatus.INTERNAL_SERVER_ERROR
+                status = (
+                    HTTPStatus.ACCEPTED
+                    if result.status in {"queued", "succeeded", "busy"}
+                    else HTTPStatus.INTERNAL_SERVER_ERROR
+                )
                 self._send_json(status, result_to_dict(result))
                 return
             if path == "/runner/start":
@@ -136,6 +173,23 @@ from (
                     min_bucket_samples=int(payload.get("min_bucket_samples", 12)),
                 )
                 self._send_json(HTTPStatus.OK, result)
+                return
+            if path == "/baseline/recompute_transactions":
+                service_ids = payload.get("service_ids")
+                if service_ids is not None and not isinstance(service_ids, list):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "service_ids must be a list"})
+                    return
+                result = build_transaction_baselines(
+                    self.runner.config.database_url,
+                    service_ids=service_ids,
+                    days=int(payload.get("days", 30)),
+                    baseline_version=payload.get("baseline_version", "baseline-v1"),
+                    api_key=self.runner.config.newrelic_api_key,
+                    graphql_url=self.runner.config.newrelic_graphql_url,
+                    limit=int(payload.get("limit", 100)),
+                )
+                status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.INTERNAL_SERVER_ERROR
+                self._send_json(status, result)
                 return
             if path == "/anomalies/mark":
                 service_ids = payload.get("service_ids")
@@ -189,6 +243,7 @@ from (
                             trace_end + timedelta(minutes=expand_minutes),
                             self.runner.config.newrelic_api_key,
                             self.runner.config.newrelic_graphql_url,
+                            baseline_version=payload.get("baseline_version", "baseline-v1"),
                         )
                     self._send_json(
                         HTTPStatus.OK,
@@ -238,6 +293,7 @@ def main() -> None:
     config = load_config()
     runner = ScheduledRunner(config)
     AgentRequestHandler.runner = runner
+    runner.start_worker()
     if config.runner_enabled:
         runner.start()
     server = ThreadingHTTPServer((args.host, args.port), AgentRequestHandler)

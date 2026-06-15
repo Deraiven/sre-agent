@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.storehub.sre-agent.tunnel</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-i</string>
+    <string>/Users/storehub/.ssh/jumpserver.pem</string>
+    <string>-N</string>
+    <string>-D</string>
+    <string>127.0.0.1:1080</string>
+    <string>-o</string>
+    <string>ExitOnForwardFailure=yes</string>
+    <string>-o</string>
+    <string>BatchMode=yes</string>
+    <string>root@54.169.8.128</string>
+  </array>
+
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/storehub/Documents/sre-agent/var/log/jumpserver-tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/storehub/Documents/sre-agent/var/log/jumpserver-tunnel.err.log</string>
+</dict>
+</plist>

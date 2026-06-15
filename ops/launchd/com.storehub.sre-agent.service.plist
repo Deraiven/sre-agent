@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.storehub.sre-agent.service</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/storehub/Documents/sre-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /opt/miniconda3/bin/python3 -m sre_agent.service --host 127.0.0.1 --port 8080</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DATABASE_URL</key>
+    <string>postgresql://sre_agent:sre_agent@localhost:5432/sre_agent</string>
+    <key>SRE_AGENT_RUNNER_ENABLED</key>
+    <string>true</string>
+    <key>SRE_AGENT_RUNNER_INTERVAL_SECONDS</key>
+    <string>900</string>
+    <key>SRE_AGENT_LOOKBACK_MINUTES</key>
+    <string>60</string>
+    <key>SRE_AGENT_GAP_RECOVERY_ENABLED</key>
+    <string>true</string>
+    <key>SRE_AGENT_GAP_LOOKBACK_HOURS</key>
+    <string>24</string>
+    <key>SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN</key>
+    <string>8</string>
+    <key>KUBECTL_AWS_PROFILE</key>
+    <string>pro</string>
+    <key>KUBECTL_PROXY_URL</key>
+    <string>socks5://127.0.0.1:1080</string>
+  </dict>
+
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/storehub/Documents/sre-agent/var/log/sre-agent-service.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/storehub/Documents/sre-agent/var/log/sre-agent-service.err.log</string>
+</dict>
+</plist>

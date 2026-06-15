@@ -48,6 +48,56 @@ create index if not exists service_metric_windows_prometheus_gin_idx
 create index if not exists service_metric_windows_kubernetes_gin_idx
   on service_metric_windows using gin (kubernetes);
 
+create table if not exists runner_runs (
+  id bigserial primary key,
+  run_type text not null,
+  status text not null,
+  window_start timestamptz,
+  window_end timestamptz,
+  scan_start timestamptz,
+  scan_end timestamptz,
+  jobs_enqueued int not null default 0,
+  jobs_succeeded int not null default 0,
+  jobs_failed int not null default 0,
+  metadata jsonb not null default '{}',
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create index if not exists runner_runs_started_idx
+  on runner_runs (started_at desc);
+
+create table if not exists collection_jobs (
+  id bigserial primary key,
+  runner_run_id bigint references runner_runs(id),
+  job_type text not null,
+  status text not null default 'queued',
+  priority int not null default 0,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  window_size text not null default '15m',
+  service_ids text[],
+  dry_run boolean not null default false,
+  attempts int not null default 0,
+  returncode int,
+  stdout text,
+  stderr text,
+  error text,
+  rows_emitted int,
+  rows_written int,
+  elapsed_seconds double precision,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create index if not exists collection_jobs_status_priority_idx
+  on collection_jobs (status, priority desc, created_at);
+
+create index if not exists collection_jobs_window_idx
+  on collection_jobs (window_start desc, window_end desc);
+
 create table if not exists service_baselines (
   id bigserial primary key,
   service_id text not null references services(service_id),
@@ -69,6 +119,26 @@ create table if not exists service_baselines (
 
 create index if not exists service_baselines_lookup_idx
   on service_baselines (service_id, baseline_version, metric_name, day_of_week, hour_of_day);
+
+create table if not exists transaction_baselines (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  baseline_version text not null,
+  transaction_name text not null,
+  p50_ms double precision,
+  p75_ms double precision,
+  p90_ms double precision,
+  p95_ms double precision,
+  p99_ms double precision,
+  avg_ms double precision,
+  sample_count int not null,
+  valid_from timestamptz not null,
+  valid_to timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists transaction_baselines_lookup_idx
+  on transaction_baselines (service_id, baseline_version, transaction_name);
 
 create table if not exists anomaly_windows (
   id bigserial primary key,

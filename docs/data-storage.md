@@ -17,10 +17,12 @@
 | 数据类型 | 特点 | 存储位置 |
 | --- | --- | --- |
 | 15m/1h 聚合窗口 | 需要频繁查询、训练、筛选 | PostgreSQL |
+| collector run/job audit | 需要追踪每轮采集、失败、重试、耗时 | PostgreSQL |
 | 异常标签 | 需要可追溯、可版本化、可人工修正 | PostgreSQL |
 | SLO 建议 | 需要审核状态和历史版本 | PostgreSQL |
 | incident timeline | 结构化事件，查询频繁 | PostgreSQL |
 | incident trace evidence | 按需 New Relic trace 摘要和 RCA 证据 | PostgreSQL |
+| transaction baseline | New Relic transaction 级 latency baseline | PostgreSQL |
 | New Relic/Prometheus 查询原始响应 | 体积较大，不常查 | S3 |
 | Agent 生成的长报告 | 文本较长，审计用 | S3 + PostgreSQL metadata |
 | 离线训练集导出 | 批量文件，供 notebook/训练任务使用 | S3 |
@@ -86,6 +88,65 @@ create index service_metric_windows_window_size_idx
 create index service_metric_windows_newrelic_gin_idx
   on service_metric_windows using gin (newrelic);
 ```
+
+### `runner_runs`
+
+保存每一轮 scheduled/manual/backfill/recovery 的运行审计。它回答：
+“这一轮为什么跑、覆盖什么窗口、排了多少 job、最终成功还是失败”。
+
+```sql
+create table runner_runs (
+  id bigserial primary key,
+  run_type text not null,
+  status text not null,
+  window_start timestamptz,
+  window_end timestamptz,
+  scan_start timestamptz,
+  scan_end timestamptz,
+  jobs_enqueued int not null default 0,
+  jobs_succeeded int not null default 0,
+  jobs_failed int not null default 0,
+  metadata jsonb not null default '{}',
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+```
+
+### `collection_jobs`
+
+保存 worker 要执行的最小采集单元。第一版按
+`window_start/window_end + service_ids chunk` 切分，避免一次全量服务采集卡住
+API 或 runner。
+
+```sql
+create table collection_jobs (
+  id bigserial primary key,
+  runner_run_id bigint references runner_runs(id),
+  job_type text not null,
+  status text not null default 'queued',
+  priority int not null default 0,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  window_size text not null default '15m',
+  service_ids text[],
+  dry_run boolean not null default false,
+  attempts int not null default 0,
+  returncode int,
+  stdout text,
+  stderr text,
+  error text,
+  rows_emitted int,
+  rows_written int,
+  elapsed_seconds double precision,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+```
+
+Gap recovery 会优先选择已有部分数据但不完整的窗口，再补完全空窗口。服务级
+缺口会进入 `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
 
 ### `service_baselines`
 
@@ -177,6 +238,31 @@ create table incident_trace_evidence (
 );
 ```
 
+### `transaction_baselines`
+
+保存服务内 transaction 级 latency baseline，用于 incident inspect 中回答
+“这个慢接口相对自己的历史基线偏离了多少”。第一版按服务全局 30 天
+New Relic Transaction 数据生成，不做小时/星期分桶。
+
+```sql
+create table transaction_baselines (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  baseline_version text not null,
+  transaction_name text not null,
+  p50_ms double precision,
+  p75_ms double precision,
+  p90_ms double precision,
+  p95_ms double precision,
+  p99_ms double precision,
+  avg_ms double precision,
+  sample_count int not null,
+  valid_from timestamptz not null,
+  valid_to timestamptz,
+  created_at timestamptz not null default now()
+);
+```
+
 ### `slo_recommendations`
 
 保存 SLO 建议和审核状态。
@@ -235,7 +321,10 @@ s3://sre-agent-data/
 
 ```mermaid
 flowchart TD
-    Scheduler["15m runner / gap recovery / daily backfill"] --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
+    Scheduler["15m runner / gap recovery / daily backfill"] --> RunAudit["Write runner_runs"]
+    RunAudit --> Queue["Enqueue collection_jobs"]
+    Queue --> Worker["Collector worker"]
+    Worker --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
     Query --> Snapshot["Write optional raw snapshot to S3"]
     Query --> Aggregate["Aggregate metrics into windows"]
     Aggregate --> Postgres["Write service_metric_windows"]
@@ -252,6 +341,7 @@ flowchart TD
 | 数据 | 保存 |
 | --- | --- |
 | `service_metric_windows` 5m/15m/1h | 12-24 个月 |
+| `runner_runs` / `collection_jobs` | 6-12 个月，按审计需求调整 |
 | `service_baselines` | 12-24 个月，按 version 保留 |
 | `anomaly_windows` | 24 个月或永久 |
 | `incident_windows` | 永久 |
@@ -266,6 +356,7 @@ flowchart TD
 | 必需表 | 原因 |
 | --- | --- |
 | `services` | 从 service catalog 查服务上下文 |
+| `runner_runs` / `collection_jobs` | 追踪采集进度、失败和 gap recovery |
 | `service_metric_windows` | 保存 30 天之外的训练窗口 |
 | `anomaly_windows` | 保存异常标签 |
 | `slo_recommendations` | 保存 SLO 建议 |

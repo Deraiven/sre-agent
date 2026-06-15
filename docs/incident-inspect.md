@@ -44,6 +44,42 @@ adds the trace failure to observability evidence.
 | Change context | `service_metric_windows.change_context` | PostgreSQL |
 | Anomaly labels | `anomaly_windows` | PostgreSQL |
 | Trace summary | New Relic NRQL `Transaction` and `Span` | `incident_trace_evidence` |
+| Transaction baseline | New Relic NRQL `Transaction` over historical window | `transaction_baselines` |
+
+## Transaction Baseline
+
+Transaction baseline enriches slow transaction evidence with historical p95/p99
+comparison. Recompute it before relying on trace deviation percentages:
+
+```bash
+curl -X POST http://127.0.0.1:8080/baseline/recompute_transactions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "service_ids": ["backoffice-v2-bff"],
+    "days": 30,
+    "baseline_version": "baseline-v1",
+    "limit": 100
+  }'
+```
+
+The inspect response then includes fields such as:
+
+```json
+{
+  "type": "slow_transaction",
+  "transaction": "WebTransaction/Expressjs/POST//api/v2/report/sales",
+  "p95_ms": 12750,
+  "baseline": {
+    "p95_ms": 12750,
+    "p99_ms": 37000,
+    "sample_count": 7842
+  },
+  "p95_vs_baseline_pct": 0
+}
+```
+
+If a transaction is not in the stored top-N baseline, inspect marks it with
+`baseline_status: missing` in `trace_evidence.top_slow_transactions`.
 
 ## New Relic Trace Queries
 
@@ -93,4 +129,3 @@ queries used, which makes RCA reports auditable.
 - Dependency names come from New Relic span attributes and may be URLs, hostnames,
   or gRPC target strings.
 - Logs and error groups are not yet integrated into the same inspect response.
-

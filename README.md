@@ -77,10 +77,11 @@ python3 scripts/collect_windows.py \
 ## Local Agent Service
 
 The service wraps the existing collector in a long-running process. It starts a
-background runner by default, every 15 minutes. Each run collects the last 60
-minutes of complete 15-minute windows with PostgreSQL upserts, then scans the
-previous 24 hours for missing or failed windows and recovers up to 8 older
-windows per run.
+scheduler and collector worker by default, every 15 minutes. Each scheduler run
+records a `runner_runs` row, enqueues `collection_jobs` for the last 60 minutes
+of complete 15-minute windows, then scans the previous 24 hours for missing,
+partial, or failed windows and enqueues up to 8 prioritized gap-recovery jobs.
+The API returns quickly while the worker drains jobs in the background.
 
 For local `storehub-pro` Kubernetes inspect, start the jumpserver SOCKS tunnel
 in another terminal first:
@@ -105,6 +106,8 @@ Useful endpoints:
 ```bash
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/runner/status
+curl 'http://127.0.0.1:8080/runner/runs?limit=10'
+curl 'http://127.0.0.1:8080/collection/jobs?limit=20'
 curl http://127.0.0.1:8080/services
 curl http://127.0.0.1:8080/services/auth-api/risk
 
@@ -115,6 +118,10 @@ curl -X POST http://127.0.0.1:8080/collect/run \
 curl -X POST http://127.0.0.1:8080/baseline/recompute \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["auth-api"],"days":30}'
+
+curl -X POST http://127.0.0.1:8080/baseline/recompute_transactions \
+  -H 'Content-Type: application/json' \
+  -d '{"service_ids":["backoffice-v2-bff"],"days":30,"limit":100}'
 
 curl -X POST http://127.0.0.1:8080/anomalies/mark \
   -H 'Content-Type: application/json' \
@@ -133,6 +140,10 @@ The first intelligence layer is deliberately rule-based:
 
 - `baseline/recompute` builds percentile baselines from the last 30 days of
   15-minute windows.
+- `baseline/recompute_transactions` builds New Relic Transaction latency
+  baselines so trace inspect can report slow transaction deviation percentages.
+- `runner/runs` and `collection/jobs` expose collection audit state, job
+  failures, retries, elapsed seconds, and rows written.
 - `anomalies/mark` labels windows by comparing New Relic, Prometheus, and
   Kubernetes signals against the baseline.
 - `risk/score` computes the current service risk from recent window scores.

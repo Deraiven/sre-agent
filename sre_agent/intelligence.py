@@ -536,16 +536,26 @@ def rank_incident_hypotheses(
                 percentiles = item.get("percentile.duration") or {}
                 p95_seconds = percentiles.get("95")
                 if isinstance(p95_seconds, (int, float)) and p95_seconds > 1:
-                    points["application_regression_or_downstream_latency"] += 25
-                    evidence["application_regression_or_downstream_latency"].append(
-                        {
-                            "source": "newrelic_trace",
-                            "type": "slow_transaction",
-                            "transaction": transaction_name,
-                            "p95_ms": p95_seconds * 1000,
-                            "sample_count": item.get("sample_count"),
+                    slow_transaction_evidence = {
+                        "source": "newrelic_trace",
+                        "type": "slow_transaction",
+                        "transaction": transaction_name,
+                        "p95_ms": p95_seconds * 1000,
+                        "sample_count": item.get("sample_count"),
+                    }
+                    baseline = item.get("baseline")
+                    if isinstance(baseline, dict):
+                        slow_transaction_evidence["baseline"] = {
+                            "p95_ms": baseline.get("p95_ms"),
+                            "p99_ms": baseline.get("p99_ms"),
+                            "avg_ms": baseline.get("avg_ms"),
+                            "sample_count": baseline.get("sample_count"),
                         }
-                    )
+                    for key in ["p95_vs_baseline_pct", "p99_vs_baseline_pct", "avg_vs_baseline_pct"]:
+                        if key in item:
+                            slow_transaction_evidence[key] = item[key]
+                    points["application_regression_or_downstream_latency"] += 25
+                    evidence["application_regression_or_downstream_latency"].append(slow_transaction_evidence)
             for item in trace_evidence.get("span_category_breakdown", []):
                 category = item.get("category") or item.get("facet")
                 percentiles = item.get("percentile.duration.ms") or {}

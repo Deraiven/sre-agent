@@ -7,9 +7,9 @@ and common debugging steps.
 
 | Component | Purpose |
 | --- | --- |
-| `sre_agent.service` | HTTP API and in-process scheduled runner |
-| `scripts/collect_windows.py` | Collects one or more 15m windows into PostgreSQL |
-| PostgreSQL | Stores services, metric windows, baselines, anomalies, and incident evidence |
+| `sre_agent.service` | HTTP API, scheduler thread, and collector worker thread |
+| `scripts/collect_windows.py` | Worker subprocess that collects one 15m service chunk into PostgreSQL |
+| PostgreSQL | Stores services, metric windows, baselines, anomalies, runner runs, jobs, and incident evidence |
 | Jumpserver SOCKS tunnel | Local access path to the private `storehub-pro` EKS API |
 
 ## Start Local Dependencies
@@ -46,11 +46,11 @@ The runner starts automatically when `SRE_AGENT_RUNNER_ENABLED=true`.
 
 Each run:
 
-1. Collects the latest complete realtime range.
-2. Marks anomalies for the collected windows.
-3. Scans recent history for missing or failed windows.
-4. Recovers a bounded number of gap windows.
-5. Marks anomalies for recovered windows.
+1. Creates a `runner_runs` audit record.
+2. Enqueues realtime `collection_jobs` for the latest complete range.
+3. Scans recent history for missing, partial, or failed windows.
+4. Enqueues bounded `gap_recovery` jobs, prioritizing partial windows first.
+5. Lets the worker execute jobs and mark anomalies after successful writes.
 
 Default settings:
 
@@ -69,16 +69,31 @@ Gap recovery is deliberately budgeted. If the tunnel or a telemetry source is
 down for multiple hours, the agent catches up gradually instead of issuing a
 large burst of New Relic, Prometheus, and Kubernetes queries.
 
+The API no longer blocks on long collector work. `/collect/run` returns
+`202 Accepted` with a `runner_run_id` and `job_ids`; the worker drains queued
+jobs in the background.
+
+On service restart, any `collection_jobs` left in `running` are marked with
+`worker_restarted_before_completion` and returned to `queued` so they can be
+retried.
+
 ## Useful API Checks
 
 ```bash
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/config
 curl http://127.0.0.1:8080/runner/status
+curl 'http://127.0.0.1:8080/runner/runs?limit=10'
+curl 'http://127.0.0.1:8080/collection/jobs?limit=20'
 ```
 
-`/runner/status` reports `running`, `last_result`, `last_gap_recovery`,
-`next_run_at`, and gap recovery settings.
+`/runner/status` reports scheduler settings, `worker_running`, `current_job`,
+`job_counts_24h`, `last_result`, `last_gap_recovery`, and `next_run_at`.
+
+`/runner/runs` shows each scheduler/manual run with job counts and duration
+timestamps. `/collection/jobs` shows per-window/service chunk status, attempts,
+return code, rows emitted/written, errors, and elapsed seconds. Use
+`?status=failed`, `?status=queued`, or `?status=running` to filter jobs.
 
 ## Check Collection Progress
 
@@ -143,12 +158,20 @@ curl -X POST http://127.0.0.1:8080/baseline/recompute \
   -H 'Content-Type: application/json' \
   -d '{"days":30}'
 
+curl -X POST http://127.0.0.1:8080/baseline/recompute_transactions \
+  -H 'Content-Type: application/json' \
+  -d '{"service_ids":["backoffice-v2-bff"],"days":30,"limit":100}'
+
 curl -X POST http://127.0.0.1:8080/anomalies/mark \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["backoffice-v2-bff"]}'
 
 curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?lookback_hours=6'
 ```
+
+`/baseline/recompute_transactions` stores New Relic Transaction p50/p95/p99
+baselines in `transaction_baselines` so incident inspect can report transaction
+latency deviation percentages.
 
 ## Common Failures
 
@@ -159,12 +182,12 @@ curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?lookback_hours=6'
 | K8s status is `error` for most services | Missing proxy/profile or tunnel failure | Check `/config`, `KUBECTL_AWS_PROFILE`, and `KUBECTL_PROXY_URL` |
 | New Relic status is `error` | Missing or invalid `NEW_RELIC_API_KEY` | Export a valid key and restart service |
 | Runner `running=false` after `next_run_at` passed | Runner thread or service lifecycle issue | Restart service; future work should add a watchdog |
-| Gap recovery does not run | Realtime collection has not finished or gap recovery disabled | Check `last_result`, `gap_recovery_enabled`, and collector duration |
+| Worker not draining queued jobs | Worker thread stopped or service is stale | Check `/runner/status.worker_running`, then restart the service |
+| Gap recovery does not run | Gap recovery disabled or no incomplete windows found | Check `last_gap_recovery`, `gap_recovery_enabled`, and `/collection/jobs?status=failed` |
 
 ## Known V1 Limitations
 
-- Runner and API share one process; a long realtime collection delays gap recovery.
+- API, scheduler, and worker still share one local process, but long collector work runs in a worker subprocess instead of blocking API requests.
 - Kubernetes inspect runs per service/window and can make full-service collection slow.
-- There is no durable `runner_runs` table yet.
+- Collector worker concurrency is currently one job at a time.
 - Local access to `storehub-pro` depends on a manually maintained SSH tunnel.
-
