@@ -26,11 +26,11 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
-| P0 | ML-driven dynamic baseline per service/metric | pending | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
-| P0 | Baseline model quality report | pending | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
-| P0 | Risk evaluator based on dynamic baseline residuals | pending | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
-| P0 | Automatic retraining schedule | pending | Refresh baselines daily or weekly with versioned model snapshots and rollback |
-| P0 | Feedback-aware risk calibration | pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
+| P0 | ML-driven dynamic baseline per service/metric | first batch evaluated, activation pending | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
+| P0 | Baseline model quality report | framework added | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
+| P0 | Risk evaluator based on dynamic baseline residuals | framework added, residual scoring pending | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
+| P0 | Automatic retraining schedule | schema/API added, scheduler pending | Refresh baselines daily or weekly with versioned model snapshots and rollback |
+| P0 | Feedback-aware risk calibration | feedback label table/API added, calibration pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
 
 ### P0: ML-Driven Dynamic Baselines
 
@@ -52,6 +52,8 @@ Minimum data gate:
 First implementation:
 
 - Add `service_metric_models` table.
+- Add `service_metric_training_runs`, `service_metric_model_buckets`,
+  `service_metric_model_evaluations`, and `risk_feedback_labels` tables.
 - Train `seasonal_quantile_v1` per `service_id + metric_name`.
 - Features:
   - weekday
@@ -78,6 +80,22 @@ Acceptance criteria:
 - Normal traffic peaks remain low risk.
 - Deviations during the same seasonal slot are visible with residual evidence.
 - Each service/metric exposes model quality and coverage.
+
+Framework completed:
+
+- Added model registry and training-run tables.
+- Added model quality/readiness API.
+- Added training dry-run and first `seasonal_quantile_v1` training API.
+- Added risk feedback label API.
+- Added `/risk/score.dynamic_baseline_model` fallback status.
+
+First training batch:
+
+- Trained 10 services with about 70.76% 30-day coverage.
+- Created 158 evaluated service/metric models.
+- Created 72,530 model buckets.
+- Created 158 evaluation rows.
+- Models are not active yet; risk still uses rule baseline fallback.
 
 ## Known Issues Found During Testing
 

@@ -133,6 +133,14 @@ curl -X POST http://127.0.0.1:8080/risk/score \
   -H 'Content-Type: application/json' \
   -d '{"service_id":"auth-api","lookback_hours":6}'
 
+curl 'http://127.0.0.1:8080/models/quality?days=30'
+
+curl -X POST http://127.0.0.1:8080/models/train \
+  -H 'Content-Type: application/json' \
+  -d '{"dry_run":true,"days":30,"model_version":"seasonal-quantile-v1"}'
+
+curl http://127.0.0.1:8080/models/training_runs
+
 curl -X POST http://127.0.0.1:8080/inspect/incident \
   -H 'Content-Type: application/json' \
   -d '{"service_id":"auth-api","limit":8,"include_trace":true}'
@@ -165,3 +173,7 @@ The first intelligence layer is deliberately rule-based:
 - `inspect/incident` supports synchronous and asynchronous incident inspection.
   It persists inspect requests/results, returns `summary` and `timeline`, and
   accepts feedback for confirmed root cause learning.
+- `models/quality`, `models/train`, and `models/training_runs` provide the P0
+  unsupervised dynamic-baseline workflow. The first trainable version builds
+  `seasonal_quantile_v1` model buckets from historical 15-minute windows and
+  stores evaluated models without activating them unless requested.

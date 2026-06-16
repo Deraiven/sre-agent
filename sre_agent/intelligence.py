@@ -139,8 +139,9 @@ def load_metric_windows(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int | None = None,
+    window_size: str = "15m",
 ) -> list[dict[str, Any]]:
-    where = ["window_size = '15m'"]
+    where = [f"window_size = {sql_literal(window_size)}"]
     if service_id:
         where.append(f"service_id = '{sql_text(service_id)}'")
     if since:
@@ -657,6 +658,32 @@ def score_transaction_baseline_risk(trace_summaries: list[dict[str, Any]]) -> di
     }
 
 
+def load_dynamic_model_status(database_url: str, service_id: str) -> dict[str, Any]:
+    sql = f"""
+select row_to_json(x)
+from (
+  select count(*)::int as active_model_count,
+         max(model_version) as model_version,
+         max(model_type) as model_type,
+         max(created_at) as latest_model_created_at
+  from service_metric_models
+  where service_id = {sql_literal(service_id)}
+    and active
+) x;
+"""
+    row = psql_json(database_url, sql) or {}
+    active_count = row.get("active_model_count") or 0
+    return {
+        "status": "active" if active_count else "not_trained",
+        "active_model_count": active_count,
+        "model_version": row.get("model_version"),
+        "model_type": row.get("model_type"),
+        "latest_model_created_at": row.get("latest_model_created_at"),
+        "residual_scoring": "enabled" if active_count else "framework_ready",
+        "fallback": "risk-v2 rule baseline remains active until a dynamic model is trained and activated",
+    }
+
+
 def score_service_risk(
     database_url: str,
     service_id: str,
@@ -702,6 +729,7 @@ def score_service_risk(
         "latest_window": evaluations[-1] if evaluations else None,
         "base_window_risk_score": base_score,
         "transaction_baseline_risk": transaction_risk,
+        "dynamic_baseline_model": load_dynamic_model_status(database_url, service_id),
         "top_evidence": top_evidence,
     }
 

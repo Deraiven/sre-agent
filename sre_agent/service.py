@@ -22,6 +22,13 @@ from .incident_inspect import (
     run_incident_inspection,
 )
 from .intelligence import build_baselines, data_coverage, data_gaps, mark_anomalies, score_service_risk, utc_now
+from .ml_baseline import (
+    add_risk_feedback_label,
+    create_training_run,
+    list_models,
+    list_training_runs,
+    model_quality_report,
+)
 from .newrelic_trace import build_transaction_baselines
 from .runner import ScheduledRunner, parse_time, result_to_dict
 
@@ -163,6 +170,39 @@ from (
 """
                 self._send_json(HTTPStatus.OK, {"services": psql_json(self.runner.config.database_url, sql)})
                 return
+            if path == "/models/quality":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    model_quality_report(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        days=int((query.get("days") or ["30"])[0]),
+                        window_size=(query.get("window_size") or ["15m"])[0],
+                        model_version=(query.get("model_version") or ["seasonal-quantile-v1"])[0],
+                    ),
+                )
+                return
+            if path == "/models":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "models": list_models(
+                            self.runner.config.database_url,
+                            service_id=(query.get("service_id") or [None])[0],
+                            model_version=(query.get("model_version") or [None])[0],
+                            active_only=(query.get("active_only") or ["false"])[0].lower() in {"1", "true", "yes"},
+                            limit=int((query.get("limit") or ["100"])[0]),
+                        )
+                    },
+                )
+                return
+            if path == "/models/training_runs":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {"training_runs": list_training_runs(self.runner.config.database_url, int((query.get("limit") or ["50"])[0]))},
+                )
+                return
             if path.startswith("/services/") and path.endswith("/risk"):
                 parts = [part for part in path.split("/") if part]
                 if len(parts) != 3:
@@ -268,6 +308,34 @@ from (
                     baseline_version=payload.get("baseline_version", "baseline-v1"),
                 )
                 self._send_json(HTTPStatus.OK, result)
+                return
+            if path == "/models/train":
+                service_ids = payload.get("service_ids")
+                if service_ids is not None and not isinstance(service_ids, list):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "service_ids must be a list"})
+                    return
+                metric_names = payload.get("metric_names")
+                if metric_names is not None and not isinstance(metric_names, list):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "metric_names must be a list"})
+                    return
+                result = create_training_run(
+                    self.runner.config.database_url,
+                    service_ids=service_ids,
+                    metric_names=metric_names,
+                    days=int(payload.get("days", 30)),
+                    model_version=payload.get("model_version", "seasonal-quantile-v1"),
+                    model_type=payload.get("model_type", "seasonal_quantile_v1"),
+                    window_size=payload.get("window_size", "15m"),
+                    dry_run=bool(payload.get("dry_run", True)),
+                    activate=bool(payload.get("activate", False)),
+                    min_coverage_pct=float(payload.get("min_coverage_pct", 70.0)),
+                    min_bucket_samples=int(payload.get("min_bucket_samples", 12)),
+                    min_precise_bucket_samples=int(payload.get("min_precise_bucket_samples", 3)),
+                )
+                self._send_json(HTTPStatus.ACCEPTED, result)
+                return
+            if path == "/risk/feedback":
+                self._send_json(HTTPStatus.OK, {"feedback": add_risk_feedback_label(self.runner.config.database_url, payload)})
                 return
             if path == "/risk/score":
                 service_id = payload.get("service_id")

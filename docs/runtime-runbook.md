@@ -175,6 +175,25 @@ curl -X POST http://127.0.0.1:8080/anomalies/mark \
 curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?lookback_hours=6'
 
 curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?since=2026-06-15T02:00:00Z&until=2026-06-15T04:00:00Z'
+
+curl 'http://127.0.0.1:8080/models/quality?days=30'
+
+curl -X POST http://127.0.0.1:8080/models/train \
+  -H 'Content-Type: application/json' \
+  -d '{"dry_run":true,"days":30,"model_version":"seasonal-quantile-v1"}'
+
+curl -X POST http://127.0.0.1:8080/models/train \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "dry_run": false,
+    "activate": false,
+    "days": 30,
+    "min_coverage_pct": 70,
+    "service_ids": ["backoffice-v2-bff"],
+    "model_version": "seasonal-quantile-v1"
+  }'
+
+curl http://127.0.0.1:8080/models/training_runs
 ```
 
 `/baseline/recompute_transactions` stores New Relic Transaction p50/p95/p99
@@ -200,6 +219,25 @@ comparisons:
   material ratio before they add risk. Normal peak-period traffic should stay
   low risk unless latency, errors, Kubernetes health, or severe resource
   pressure also degrade.
+
+## Dynamic Baseline Model Framework
+
+P0 model endpoints are available before actual training is implemented:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /models/quality` | Check coverage/readiness for unsupervised seasonal baseline training |
+| `POST /models/train` | Create a training run record; default `dry_run=true` only records readiness |
+| `GET /models/training_runs` | List training and dry-run records |
+| `GET /models` | List persisted model versions when real training is implemented |
+| `POST /risk/feedback` | Store false positive, false negative, or confirmed incident labels |
+
+The initial model type is `seasonal_quantile_v1`. It is unsupervised and learns
+normal service behavior by `weekday + hour + 15m minute_slot`. Training writes
+models, buckets, and evaluation rows. Keep `activate=false` while validating
+backtest quality; until a model is activated, `/risk/score` returns
+`dynamic_baseline_model.status=not_trained` and continues using risk v2 rule
+baselines as fallback.
 
 ## Incident Inspect V2
 
