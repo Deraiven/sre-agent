@@ -34,6 +34,21 @@ METRIC_NAMES = [
 ]
 
 WINDOW_SECONDS = {"5m": 300, "15m": 900, "1h": 3600}
+TRAFFIC_CONTEXT_METRICS = {"newrelic.request_count", "newrelic.rpm"}
+RESOURCE_RATIO_THRESHOLDS = {
+    "prometheus.cpu_usage.avg": (1.20, 1.40),
+    "prometheus.memory_usage.avg": (1.20, 1.40),
+    "prometheus.cpu_throttling.avg": (1.30, 1.60),
+    "prometheus.network_receive.avg": (1.50, 2.00),
+    "prometheus.network_transmit.avg": (1.50, 2.00),
+}
+BASELINE_SCOPE_WEIGHTS = {
+    "weekday_hour_slot": 1.00,
+    "hour_slot": 0.80,
+    "weekday_hour": 0.60,
+    "hour": 0.45,
+    "global": 0.25,
+}
 
 
 def utc_now() -> datetime:
@@ -161,6 +176,7 @@ class BaselineBucket:
     metric_name: str
     day_of_week: int | None
     hour_of_day: int | None
+    minute_slot: int | None
     p50: float | None
     p75: float | None
     p90: float | None
@@ -175,6 +191,7 @@ def build_baselines(
     days: int = 30,
     baseline_version: str = BASELINE_VERSION,
     min_bucket_samples: int = 12,
+    min_precise_bucket_samples: int = 3,
 ) -> dict[str, Any]:
     valid_from = utc_now()
     since = valid_from - timedelta(days=days)
@@ -183,15 +200,21 @@ def build_baselines(
 
     for service_id in selected_services:
         rows = load_metric_windows(database_url, service_id=service_id, since=since, until=valid_from)
-        by_metric: dict[tuple[str, int | None, int | None], list[float]] = {}
+        by_metric: dict[tuple[str, int | None, int | None, int | None], list[float]] = {}
         for row in rows:
             window_start = parse_time(row["window_start"])
+            minute_slot = window_start.minute
             metrics = extract_metrics(row)
             for metric_name, value in metrics.items():
-                by_metric.setdefault((metric_name, None, None), []).append(value)
-                by_metric.setdefault((metric_name, window_start.weekday(), window_start.hour), []).append(value)
-        for (metric_name, day_of_week, hour_of_day), values in by_metric.items():
-            if day_of_week is not None and len(values) < min_bucket_samples:
+                by_metric.setdefault((metric_name, None, None, None), []).append(value)
+                by_metric.setdefault((metric_name, None, window_start.hour, None), []).append(value)
+                by_metric.setdefault((metric_name, None, window_start.hour, minute_slot), []).append(value)
+                by_metric.setdefault((metric_name, window_start.weekday(), window_start.hour, None), []).append(value)
+                by_metric.setdefault((metric_name, window_start.weekday(), window_start.hour, minute_slot), []).append(value)
+        for (metric_name, day_of_week, hour_of_day, minute_slot), values in by_metric.items():
+            precise_bucket = day_of_week is not None and minute_slot is not None
+            required_samples = min_precise_bucket_samples if precise_bucket else min_bucket_samples
+            if (day_of_week is not None or hour_of_day is not None or minute_slot is not None) and len(values) < required_samples:
                 continue
             buckets.append(
                 BaselineBucket(
@@ -199,6 +222,7 @@ def build_baselines(
                     metric_name=metric_name,
                     day_of_week=day_of_week,
                     hour_of_day=hour_of_day,
+                    minute_slot=minute_slot,
                     p50=percentile(values, 0.50),
                     p75=percentile(values, 0.75),
                     p90=percentile(values, 0.90),
@@ -221,10 +245,10 @@ def build_baselines(
         statements.append(
             """
 insert into service_baselines (
-  service_id, baseline_version, metric_name, day_of_week, hour_of_day, traffic_bucket,
+  service_id, baseline_version, metric_name, day_of_week, hour_of_day, minute_slot, traffic_bucket,
   p50, p75, p90, p95, p99, sample_count, valid_from
 ) values (
-  {service_id}, {baseline_version}, {metric_name}, {day_of_week}, {hour_of_day}, null,
+  {service_id}, {baseline_version}, {metric_name}, {day_of_week}, {hour_of_day}, {minute_slot}, null,
   {p50}, {p75}, {p90}, {p95}, {p99}, {sample_count}, {valid_from}
 );
 """.format(
@@ -233,6 +257,7 @@ insert into service_baselines (
                 metric_name=sql_literal(bucket.metric_name),
                 day_of_week=sql_literal(bucket.day_of_week),
                 hour_of_day=sql_literal(bucket.hour_of_day),
+                minute_slot=sql_literal(bucket.minute_slot),
                 p50=sql_literal(bucket.p50),
                 p75=sql_literal(bucket.p75),
                 p90=sql_literal(bucket.p90),
@@ -258,7 +283,7 @@ def load_baseline_map(database_url: str, service_id: str, baseline_version: str 
     sql = f"""
 select coalesce(json_agg(row_to_json(b)), '[]'::json)
 from (
-  select metric_name, day_of_week, hour_of_day, p50, p75, p90, p95, p99, sample_count
+  select metric_name, day_of_week, hour_of_day, minute_slot, p50, p75, p90, p95, p99, sample_count
   from service_baselines
   where service_id = '{sql_text(service_id)}'
     and baseline_version = '{sql_text(baseline_version)}'
@@ -267,15 +292,106 @@ from (
     rows = psql_json(database_url, sql) or []
     result: dict[str, dict] = {}
     for row in rows:
-        key = f"{row['metric_name']}|{row['day_of_week']}|{row['hour_of_day']}"
+        key = f"{row['metric_name']}|{row['day_of_week']}|{row['hour_of_day']}|{row.get('minute_slot')}"
         result[key] = row
     return result
 
 
+def baseline_candidates(baselines: dict[str, dict], metric_name: str, window_start: datetime) -> list[dict[str, Any]]:
+    candidates = [
+        (f"{metric_name}|{window_start.weekday()}|{window_start.hour}|{window_start.minute}", "weekday_hour_slot"),
+        (f"{metric_name}|None|{window_start.hour}|{window_start.minute}", "hour_slot"),
+        (f"{metric_name}|{window_start.weekday()}|{window_start.hour}|None", "weekday_hour"),
+        (f"{metric_name}|None|{window_start.hour}|None", "hour"),
+        (f"{metric_name}|None|None|None", "global"),
+    ]
+    result = []
+    for key, scope in candidates:
+        baseline = baselines.get(key)
+        if baseline:
+            result.append({**baseline, "baseline_scope": scope, "baseline_weight": BASELINE_SCOPE_WEIGHTS[scope]})
+    return result
+
+
 def pick_baseline(baselines: dict[str, dict], metric_name: str, window_start: datetime) -> dict | None:
-    specific_key = f"{metric_name}|{window_start.weekday()}|{window_start.hour}"
-    global_key = f"{metric_name}|None|None"
-    return baselines.get(specific_key) or baselines.get(global_key)
+    candidates = baseline_candidates(baselines, metric_name, window_start)
+    return candidates[0] if candidates else None
+
+
+def metric_deviation_points(metric_name: str, value: float, baseline: dict[str, Any]) -> tuple[int, str | None]:
+    p95 = baseline.get("p95")
+    p99 = baseline.get("p99")
+    if p95 is None and p99 is None:
+        return 0, None
+    if metric_name in TRAFFIC_CONTEXT_METRICS:
+        return 0, "traffic_context"
+    if metric_name in RESOURCE_RATIO_THRESHOLDS:
+        reference = p99 if isinstance(p99, (int, float)) and p99 > 0 else p95
+        if not isinstance(reference, (int, float)) or reference <= 0:
+            return 0, None
+        warning_ratio, critical_ratio = RESOURCE_RATIO_THRESHOLDS[metric_name]
+        ratio = value / reference
+        if ratio >= critical_ratio:
+            return 28, "resource_critical_ratio"
+        if ratio >= warning_ratio:
+            return 16, "resource_warning_ratio"
+        return 0, None
+    if metric_name.startswith("newrelic.error_rate"):
+        if p99 is not None and value > p99 and value > 0:
+            return 40, "error_rate_p99"
+        if p95 is not None and value > p95 and value > 0:
+            return 28, "error_rate_p95"
+        return 0, None
+    if "latency" in metric_name:
+        reference = p99 if isinstance(p99, (int, float)) and p99 > 0 else p95
+        if isinstance(reference, (int, float)) and reference > 0:
+            ratio = value / reference
+            if ratio >= 1.5:
+                return 28, "latency_critical_ratio"
+            if ratio >= 1.2:
+                return 16, "latency_warning_ratio"
+        return 0, None
+    if p99 is not None and value > p99 and value > 0:
+        return 20, "p99"
+    if p95 is not None and value > p95 and value > 0:
+        return 10, "p95"
+    return 0, None
+
+
+def baseline_reference_value(metric_name: str, baseline: dict[str, Any]) -> float | None:
+    p95 = baseline.get("p95")
+    p99 = baseline.get("p99")
+    if metric_name.startswith("newrelic.error_rate"):
+        return p99 if isinstance(p99, (int, float)) and p99 > 0 else p95
+    if metric_name in RESOURCE_RATIO_THRESHOLDS or "latency" in metric_name:
+        return p99 if isinstance(p99, (int, float)) and p99 > 0 else p95
+    return p99 if isinstance(p99, (int, float)) and p99 > 0 else p95
+
+
+def metric_baseline_comparison(metric_name: str, value: float, baseline: dict[str, Any]) -> dict[str, Any]:
+    raw_points, deviation_type = metric_deviation_points(metric_name, value, baseline)
+    weight = float(baseline.get("baseline_weight") or 1.0)
+    weighted_points = round(raw_points * weight)
+    reference_value = baseline_reference_value(metric_name, baseline)
+    deviation_ratio = (
+        value / reference_value
+        if isinstance(reference_value, (int, float)) and reference_value > 0
+        else None
+    )
+    return {
+        "baseline_scope": baseline.get("baseline_scope"),
+        "baseline_weight": weight,
+        "baseline_sample_count": baseline.get("sample_count"),
+        "baseline_minute_slot": baseline.get("minute_slot"),
+        "baseline_p50": baseline.get("p50"),
+        "baseline_p95": baseline.get("p95"),
+        "baseline_p99": baseline.get("p99"),
+        "baseline_reference_value": reference_value,
+        "deviation_ratio": deviation_ratio,
+        "deviation_type": deviation_type,
+        "raw_points": raw_points,
+        "weighted_points": weighted_points,
+    }
 
 
 def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str, Any]:
@@ -286,12 +402,9 @@ def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str
     score = 0
 
     for metric_name, value in metrics.items():
-        baseline = pick_baseline(baselines, metric_name, window_start)
-        if not baseline or not baseline.get("sample_count"):
+        candidates = [baseline for baseline in baseline_candidates(baselines, metric_name, window_start) if baseline.get("sample_count")]
+        if not candidates:
             continue
-        p95 = baseline.get("p95")
-        p99 = baseline.get("p99")
-        p50 = baseline.get("p50")
         if metric_name == "kubernetes.ready_ratio":
             if value < 1.0:
                 severity_points = 35 if value < 0.8 else 20
@@ -299,18 +412,13 @@ def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str
                 anomaly_types.add("kubernetes_availability")
                 evidence.append({"metric": metric_name, "value": value, "expected": 1.0, "points": severity_points})
             continue
-        if p99 is not None and value > p99 and value > 0:
-            points = 28
-        elif p95 is not None and value > p95 and value > 0:
-            points = 16
-        else:
+        comparisons = [metric_baseline_comparison(metric_name, value, baseline) for baseline in candidates]
+        selected = max(comparisons, key=lambda item: item["weighted_points"])
+        points = selected["weighted_points"]
+        if points <= 0:
             continue
-        if metric_name in {"newrelic.request_count", "newrelic.rpm"}:
-            anomaly_types.add("traffic_change")
-            points = 8
-        elif metric_name.startswith("newrelic.error_rate"):
+        if metric_name.startswith("newrelic.error_rate"):
             anomaly_types.add("error_rate")
-            points += 12
         elif "latency" in metric_name:
             anomaly_types.add("latency")
         elif metric_name.startswith("prometheus."):
@@ -322,10 +430,19 @@ def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str
             {
                 "metric": metric_name,
                 "value": value,
-                "baseline_p50": p50,
-                "baseline_p95": p95,
-                "baseline_p99": p99,
+                "baseline_p50": selected["baseline_p50"],
+                "baseline_p95": selected["baseline_p95"],
+                "baseline_p99": selected["baseline_p99"],
+                "baseline_scope": selected["baseline_scope"],
+                "baseline_weight": selected["baseline_weight"],
+                "baseline_sample_count": selected["baseline_sample_count"],
+                "baseline_minute_slot": selected["baseline_minute_slot"],
+                "baseline_reference_value": selected["baseline_reference_value"],
+                "deviation_ratio": selected["deviation_ratio"],
+                "deviation_type": selected["deviation_type"],
+                "raw_points": selected["raw_points"],
                 "points": points,
+                "baseline_comparisons": comparisons,
             }
         )
         score += points

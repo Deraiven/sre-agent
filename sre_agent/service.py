@@ -232,6 +232,7 @@ from (
                     days=int(payload.get("days", 30)),
                     baseline_version=payload.get("baseline_version", "baseline-v1"),
                     min_bucket_samples=int(payload.get("min_bucket_samples", 12)),
+                    min_precise_bucket_samples=int(payload.get("min_precise_bucket_samples", 3)),
                 )
                 self._send_json(HTTPStatus.OK, result)
                 return

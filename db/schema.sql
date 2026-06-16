@@ -105,6 +105,7 @@ create table if not exists service_baselines (
   metric_name text not null,
   day_of_week int,
   hour_of_day int,
+  minute_slot int,
   traffic_bucket text,
   p50 double precision,
   p75 double precision,
@@ -117,8 +118,14 @@ create table if not exists service_baselines (
   created_at timestamptz not null default now()
 );
 
+alter table service_baselines
+  add column if not exists minute_slot int;
+
 create index if not exists service_baselines_lookup_idx
   on service_baselines (service_id, baseline_version, metric_name, day_of_week, hour_of_day);
+
+create index if not exists service_baselines_lookup_slot_idx
+  on service_baselines (service_id, baseline_version, metric_name, day_of_week, hour_of_day, minute_slot);
 
 create table if not exists transaction_baselines (
   id bigserial primary key,

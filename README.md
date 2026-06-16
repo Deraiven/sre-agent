@@ -158,6 +158,10 @@ The first intelligence layer is deliberately rule-based:
   Kubernetes signals against the baseline.
 - `risk/score` computes risk v2 from recent window scores plus persisted New
   Relic transaction baseline deviations when trace evidence exists.
+  High request volume or rpm is treated as traffic context, not risk by itself;
+  resource metrics are compared against multiple weighted baselines. The
+  service's weekday/hour/15m slot baseline has the highest weight, while global
+  baseline still participates with a small weight as long-term context.
 - `inspect/incident` supports synchronous and asynchronous incident inspection.
   It persists inspect requests/results, returns `summary` and `timeline`, and
   accepts feedback for confirmed root cause learning.

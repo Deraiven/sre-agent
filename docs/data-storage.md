@@ -161,6 +161,7 @@ create table service_baselines (
   metric_name text not null,
   day_of_week int,
   hour_of_day int,
+  minute_slot int,
   traffic_bucket text,
   p50 double precision,
   p75 double precision,
@@ -173,6 +174,16 @@ create table service_baselines (
   created_at timestamptz not null default now()
 );
 ```
+
+Risk v2 优先使用周期时间槽 baseline，避免把正常高峰误判为危险。选择顺序：
+
+1. `service + metric + weekday + hour + minute_slot`
+2. `service + metric + hour + minute_slot`
+3. `service + metric + weekday + hour`
+4. `service + metric + hour`
+5. `service + metric global`
+
+`minute_slot` 对 15m 窗口通常是 `0/15/30/45`。
 
 ### `anomaly_windows`
 

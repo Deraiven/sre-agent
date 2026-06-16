@@ -185,6 +185,22 @@ Risk v2 includes persisted trace transaction deviations when recent
 `incident_trace_evidence` overlaps the risk window. It does not query New Relic
 live during normal risk reads.
 
+Risk v2 is calibrated for recurring daily peaks and uses weighted baseline
+comparisons:
+
+- `newrelic.request_count` and `newrelic.rpm` are traffic context, not risk
+  points by themselves.
+- Resource metrics are compared against all available baseline scopes:
+  `weekday + hour + 15m minute_slot`, `hour + minute_slot`, `weekday + hour`,
+  `hour`, and `global`.
+- The precise slot baseline has the highest weight. Global baseline still
+  participates, but with low weight, so long-term abnormality can be visible
+  without turning normal daily peaks into critical alerts.
+- CPU, memory, throttling, and network signals must exceed baseline by a
+  material ratio before they add risk. Normal peak-period traffic should stay
+  low risk unless latency, errors, Kubernetes health, or severe resource
+  pressure also degrade.
+
 ## Incident Inspect V2
 
 Synchronous inspect still returns the result directly:

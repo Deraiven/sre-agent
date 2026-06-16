@@ -14,11 +14,70 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Gap recovery | Working, needs improvement | Bounded to 8 windows per run; can take many cycles to catch up |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 52 services mapped; owners/SLOs still need human review |
-| Dynamic service baselines | Done | `service_baselines` supports service-specific metric baselines |
+| Dynamic service baselines | Working | Rule-based seasonal baselines exist; ML-driven dynamic baselines are P0 |
 | Transaction baselines | Done, manual | `transaction_baselines` built for 52 services, 1403 rows total |
-| Risk scoring v1 | Working | Rule-based scoring from recent 15m windows and service baselines |
+| Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
 | Launchd local runtime | Added | `ops/launchd` can keep local service and tunnel alive |
+
+## Core P0 Roadmap
+
+These items are the core of the SRE Agent product, not optional polish.
+
+| Priority | Task | Status | Target outcome |
+| --- | --- | --- | --- |
+| P0 | ML-driven dynamic baseline per service/metric | pending | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
+| P0 | Baseline model quality report | pending | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
+| P0 | Risk evaluator based on dynamic baseline residuals | pending | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
+| P0 | Automatic retraining schedule | pending | Refresh baselines daily or weekly with versioned model snapshots and rollback |
+| P0 | Feedback-aware risk calibration | pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
+
+### P0: ML-Driven Dynamic Baselines
+
+Goal:
+
+- Automatically learn periodic patterns for every service and every metric.
+- Use historical `15m` windows as the primary training dataset.
+- Start with interpretable models before introducing complex ML.
+
+Minimum data gate:
+
+| Use case | Minimum | Recommended |
+| --- | --- | --- |
+| Seasonal baseline | 7 days `15m`, coverage >= 90% | 14-21 days, coverage >= 95% |
+| Stable dynamic baseline | 14 days `15m` | 21-30 days |
+| Risk prediction model | 30-60 days + labels/feedback | 90 days |
+| 5m spike/burn model | Core services 7-14 days `5m` | 30 days `5m` |
+
+First implementation:
+
+- Add `service_metric_models` table.
+- Train `seasonal_quantile_v1` per `service_id + metric_name`.
+- Features:
+  - weekday
+  - hour
+  - 15m minute slot
+  - traffic context
+  - optional traffic-normalized resource metrics
+- Outputs:
+  - expected p50/p75/p90/p95/p99
+  - residual
+  - residual z-score or robust MAD score
+  - baseline confidence
+  - model freshness
+- Fallback order remains:
+  - `weekday + hour + minute_slot`
+  - `hour + minute_slot`
+  - `weekday + hour`
+  - `hour`
+  - `global`
+
+Acceptance criteria:
+
+- `/risk/score` can explain which learned baseline model was used.
+- Normal traffic peaks remain low risk.
+- Deviations during the same seasonal slot are visible with residual evidence.
+- Each service/metric exposes model quality and coverage.
 
 ## Known Issues Found During Testing
 
@@ -227,6 +286,11 @@ Acceptance criteria:
 - Added `/data/coverage` and `/gaps`.
 - Fixed inspect nested risk to use the exact inspect `since/until` window.
 - Added risk v2 transaction-baseline evidence from persisted New Relic trace summaries.
+- Calibrated risk v2 for normal peak traffic:
+  - request count/rpm no longer add risk by themselves;
+  - baseline comparison now uses weighted weekday/hour/slot, hour/slot, hour, and global scopes;
+  - global baseline is retained as low-weight long-term context;
+  - resource metrics require material ratio deviation before adding risk.
 - Added incident inspect v2:
   - persisted `incident_inspections`;
   - async inspect worker;

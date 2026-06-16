@@ -116,14 +116,30 @@ python3 scripts/collect_windows.py \
 
 不要对 `5m`、`15m`、`1h`、`1d` 全部窗口都直接查询外部系统。第一阶段使用 `15m` 作为主训练粒度，覆盖近 30 天。52 个服务约产生 `52 * 2880 = 149,760` 条窗口，已经足够建立 SLO baseline、异常标签和风险模型。
 
+Risk baseline 必须按周期时间槽使用历史数据。当前主 baseline 使用
+`weekday + hour + 15m minute_slot`，例如“周一 10:15”会优先对比历史周一
+10:15 的样本；样本不足时再 fallback 到“每天 10:15”、“周一 10 点”、
+“每天 10 点”和全局 baseline。这样 C2C/B2C/PaaS 服务的正常高峰不会被
+全局 p95/p99 误判为危险。
+
 推荐窗口策略：
 
 | 窗口 | 是否直接采集 | 用途 |
 | --- | --- | --- |
-| `15m` | 是，主窗口 | SLO、异常检测、风险预测训练主粒度 |
+| `15m` | 是，主窗口 | SLO、异常检测、周期 baseline、风险预测训练主粒度 |
 | `1h` | 否，从 15m 聚合 | 趋势、报表、降噪后的容量观察 |
 | `1d` | 否，从 15m 聚合 | 周期性、周报、SLO 推荐证据 |
-| `5m` | 只在 incident 附近或核心服务采 | 快速故障定位、突刺分析 |
+| `5m` | 选择性采集 | 快速故障定位、突刺分析、burn rate、核心链路早期预警 |
+
+`5m` 不建议第一阶段对所有服务全量回填 30 天，因为查询成本和存储会增加
+约 3 倍，而且普通周期 baseline 用 `15m minute_slot` 已经足够。建议策略：
+
+| 范围 | 建议 |
+| --- | --- |
+| 全服务 | 30 天 `15m` 必须完整，用于周期 baseline |
+| C2C/B2C/PaaS 核心服务 | 可补最近 7-14 天 `5m`，用于突刺和 burn-rate |
+| Incident 前后 | 对影响服务补 `5m`，窗口覆盖 incident 前后 2-6 小时 |
+| 长期报表 | 从 `15m` 聚合到 `1h/1d`，不要重复查询外部系统 |
 
 最有效的建模维度优先级：
 
@@ -140,7 +156,8 @@ python3 scripts/collect_windows.py \
 近 30 天回填建议分两步：
 
 1. 回填 New Relic + Prometheus 的 `15m` 历史窗口，先跳过 Kubernetes 和 GitHub。
-2. 从今天开始持续采集 Kubernetes inspect；只有 incident 附近再补 `5m` 精细窗口。
+2. 用 `15m` 历史窗口构建周期 baseline：`weekday + hour + minute_slot`。
+3. 从今天开始持续采集 Kubernetes inspect；只有核心服务或 incident 附近再补 `5m` 精细窗口。
 
 示例命令：
 
