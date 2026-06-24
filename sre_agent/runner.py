@@ -23,6 +23,7 @@ WINDOW_SECONDS = {
     "15m": 15 * 60,
     "1h": 60 * 60,
 }
+KUBERNETES_OK_STATUSES = ("collected", "events_only", "partial", "missing")
 
 
 @dataclass
@@ -152,7 +153,7 @@ coverage as (
       when a.service_id is null then true
       when coalesce(a.newrelic_status, '') <> 'collected' then true
       when coalesce(a.prometheus_status, 'collected') not in ('collected', 'missing') then true
-      when {kubernetes_gap_check} and coalesce(a.kubernetes_status, '') not in ('collected', 'missing') then true
+      when {kubernetes_gap_check} and coalesce(a.kubernetes_status, '') not in {KUBERNETES_OK_STATUSES} then true
       else false
     end as needs_recovery
   from expected_windows w

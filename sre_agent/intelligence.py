@@ -49,6 +49,7 @@ BASELINE_SCOPE_WEIGHTS = {
     "hour": 0.45,
     "global": 0.25,
 }
+KUBERNETES_OK_STATUSES = ("collected", "events_only", "partial", "missing")
 
 
 def utc_now() -> datetime:
@@ -779,7 +780,7 @@ from (
     count(a.*)::int as rows,
     count(a.*) filter (where a.newrelic->>'status' = 'collected')::int as newrelic_collected,
     count(a.*) filter (where coalesce(a.prometheus_resources->>'status', 'collected') in ('collected', 'missing'))::int as prometheus_ok,
-    count(a.*) filter (where a.kubernetes->>'status' in ('collected', 'missing'))::int as kubernetes_ok,
+    count(a.*) filter (where a.kubernetes->>'status' in {KUBERNETES_OK_STATUSES})::int as kubernetes_ok,
     count(a.*) filter (where coalesce(a.data_quality->'errors', '[]'::jsonb) <> '[]'::jsonb)::int as data_quality_errors
   from expected_windows w
   cross join service_count sc
@@ -853,7 +854,7 @@ coverage as (
     case
       when a.service_id is null then true
       when coalesce(a.newrelic_status, '') <> 'collected' then true
-      when coalesce(a.kubernetes_status, '') not in ('collected', 'missing') then true
+      when coalesce(a.kubernetes_status, '') not in {KUBERNETES_OK_STATUSES} then true
       when coalesce(a.data_quality_errors, '[]'::jsonb) <> '[]'::jsonb then true
       else false
     end as has_gap

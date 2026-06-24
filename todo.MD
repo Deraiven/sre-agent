@@ -13,9 +13,9 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Realtime runner | Working | Runs every 15m with 60m lookback and 24h gap scan |
 | Gap recovery | Working | Runner is bounded to near-term gaps; historical gaps are handled by a standalone backfill worker |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
-| Service catalog | Mostly complete | 52 services mapped; owners/SLOs still need human review |
+| Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
 | Dynamic service baselines | Working | Rule-based seasonal baselines exist; ML-driven dynamic baselines are P0 |
-| Transaction baselines | Done, manual refresh | `transaction_baselines` built for 52 services, 1403 rows total |
+| Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
 | Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
 | Launchd local runtime | Added | `ops/launchd` can keep local service and tunnel alive |
@@ -253,7 +253,7 @@ Acceptance criteria:
 | --- | --- | --- |
 | P1 | Add New Relic logs and error groups | pending |
 | P1 | Add dependency classification from trace hotspots | pending |
-| P2 | Add data quality section explaining missing/partial signals | pending |
+| P2 | Add data quality section explaining missing/partial signals | done |
 | P2 | Use incident feedback to tune hypothesis ranking weights | pending |
 | P2 | Add persisted inspect worker concurrency limits | pending |
 
@@ -283,7 +283,7 @@ Acceptance criteria:
 
 | Priority | Task | Status |
 | --- | --- | --- |
-| P1 | Review inferred owners for all 52 services | pending |
+| P1 | Review inferred owners for all 51 services | pending |
 | P1 | Review service SLO targets with owners | pending |
 | P1 | Fill upstream/downstream dependencies in `service-catalog.yaml` | pending |
 | P1 | Add runbook links for critical services | pending |
@@ -326,9 +326,10 @@ Acceptance criteria:
 - Added `scripts/historical_gap_backfill.py` for historical gaps outside the runner window.
 - Added `scripts/watch_service.py` watchdog for local service restarts.
 - Added `AGENT.md` coding/operations guide.
-- Built full transaction baseline:
+- Built full transaction baseline before catalog cleanup:
   - services queried: 52
   - baseline rows: 1403
+  - current catalog after removing invalid services: 51 services; transaction baseline table covers 48 services and 1393 rows
   - zero-transaction services:
     - `3p-webhook-adapter-infra-svc`
     - `backoffice-migrate-jobs`

@@ -552,10 +552,79 @@ def collect_victorialogs_kubernetes_events(
     for row in rows:
         event = normalize_victorialogs_kubernetes_event(row)
         involved_name = event.get("involved_name")
-        if involved_name and involved_name not in pod_names and involved_name != workload_name:
+        if pod_names and involved_name and involved_name not in pod_names and involved_name != workload_name:
             continue
         events.append(event)
     return events
+
+
+def kubernetes_event_counts(events: list[dict]) -> dict[str, int]:
+    unhealthy_events = [event for event in events if event.get("reason") == "Unhealthy"]
+    failed_scheduling_events = [event for event in events if event.get("reason") == "FailedScheduling"]
+    killing_events = [event for event in events if event.get("reason") == "Killing"]
+    image_pull_failure_events = [
+        event
+        for event in events
+        if event.get("reason") in {"Failed", "BackOff", "ErrImagePull", "ImagePullBackOff"}
+        and "pull" in (event.get("message") or "").lower()
+    ]
+    oom_killed_events = [
+        event
+        for event in events
+        if "oomkilled" in f"{event.get('reason') or ''} {event.get('message') or ''}".lower()
+    ]
+    return {
+        "probe_failure_count": len(unhealthy_events),
+        "failed_scheduling_count": len(failed_scheduling_events),
+        "killing_event_count": len(killing_events),
+        "image_pull_failure_count": len(image_pull_failure_events),
+        "oom_killed_count": len(oom_killed_events),
+    }
+
+
+def collect_kubernetes_events_fallback(
+    base: dict,
+    namespace: str,
+    workload_name: str,
+    start: datetime,
+    end: datetime,
+    args: argparse.Namespace,
+    inspect_error: Exception | None = None,
+) -> tuple[dict, list[dict]]:
+    provider = args.kubernetes_events_provider
+    can_query_victorialogs = bool(args.victorialogs_url and args.victorialogs_kubernetes_events_query_template)
+    if args.skip_kubernetes_events or provider not in {"auto", "victorialogs"} or not can_query_victorialogs:
+        errors = []
+        if inspect_error is not None:
+            errors.append({"source": "kubernetes", "signal": "inspect", "error": str(inspect_error)})
+        return {"status": "error", **base}, errors
+    try:
+        events = collect_victorialogs_kubernetes_events(
+            namespace,
+            workload_name,
+            "",
+            set(),
+            start,
+            end,
+            args,
+        )
+    except Exception as exc:  # noqa: BLE001 - preserve original inspect error and event error.
+        errors = []
+        if inspect_error is not None:
+            errors.append({"source": "kubernetes", "signal": "inspect", "error": str(inspect_error)})
+        errors.append({"source": "victorialogs", "signal": "kubernetes_events", "error": str(exc)})
+        return {"status": "error", **base, "events_collected": False, "events_provider": "victorialogs"}, errors
+
+    status = "events_only" if events else "partial"
+    return {
+        "status": status,
+        **base,
+        **kubernetes_event_counts(events),
+        "events": events,
+        "events_collected": True,
+        "events_provider": "victorialogs",
+        "inspect_error": str(inspect_error) if inspect_error is not None else None,
+    }, []
 
 
 def container_state_summary(container_status: dict) -> dict:
@@ -704,15 +773,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
                 }
             )
 
-        unhealthy_events = [event for event in events if event.get("reason") == "Unhealthy"]
-        failed_scheduling_events = [event for event in events if event.get("reason") == "FailedScheduling"]
-        killing_events = [event for event in events if event.get("reason") == "Killing"]
-        pull_failure_events = [
-            event
-            for event in events
-            if event.get("reason") in {"Failed", "BackOff", "ErrImagePull", "ImagePullBackOff"}
-            and "pull" in (event.get("message") or "").lower()
-        ]
+        event_counts = kubernetes_event_counts(events)
         status = workload.get("status", {})
         spec = workload.get("spec", {})
         desired_replicas = spec.get("replicas", 0)
@@ -740,10 +801,10 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             "pod_count": len(pods),
             "restart_count": restart_count,
             "oom_killed_count": oom_killed_count,
-            "probe_failure_count": len(unhealthy_events),
-            "failed_scheduling_count": len(failed_scheduling_events),
-            "killing_event_count": len(killing_events),
-            "image_pull_failure_count": len(pull_failure_events),
+            "probe_failure_count": event_counts["probe_failure_count"],
+            "failed_scheduling_count": event_counts["failed_scheduling_count"],
+            "killing_event_count": event_counts["killing_event_count"],
+            "image_pull_failure_count": event_counts["image_pull_failure_count"],
             "waiting_reasons": waiting_reasons,
             "pods": pod_summaries,
             "events": events,
@@ -751,9 +812,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             "events_provider": args.kubernetes_events_provider,
         }, errors
     except Exception as exc:  # noqa: BLE001 - persist collection error as data quality.
-        return {"status": "error", **base}, [
-            {"source": "kubernetes", "signal": "inspect", "error": str(exc)}
-        ]
+        return collect_kubernetes_events_fallback(base, namespace, workload_name, start, end, args, inspect_error=exc)
     finally:
         if kubeconfig:
             try:

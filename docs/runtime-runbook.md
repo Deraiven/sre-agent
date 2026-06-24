@@ -99,7 +99,7 @@ Default settings:
 | `SRE_AGENT_COLLECTION_TIMEOUT_SECONDS` | `300` | Maximum runtime for one collector job |
 | `SRE_AGENT_SKIP_KUBERNETES` | `false` | Global emergency switch to skip all Kubernetes inspect |
 | `SRE_AGENT_BACKFILL_SKIP_KUBERNETES` | `true` | Skip Kubernetes inspect for gap recovery and stale realtime backlog jobs |
-| `SRE_AGENT_SKIP_KUBERNETES_EVENTS` | `true` | Skip Kubernetes event lookup inside inspect collection |
+| `SRE_AGENT_SKIP_KUBERNETES_EVENTS` | `false` | Skip Kubernetes event lookup inside inspect collection |
 | `SRE_AGENT_KUBERNETES_EVENTS_PROVIDER` | `auto` | Use `victorialogs` when configured, otherwise `kubectl`; can be `kubectl`, `victorialogs`, or `none` |
 | `VICTORIALOGS_URL` | `https://log.pro.mymyhub.com` | VictoriaLogs base URL for Kubernetes event lookup |
 | `VICTORIALOGS_TENANT` | unset | Optional VictoriaLogs tenant, formatted as `AccountID:ProjectID` |
@@ -241,14 +241,16 @@ python3 scripts/collect_windows.py \
   --kubectl-proxy-url socks5://127.0.0.1:1080
 ```
 
-Kubernetes events can come from either the Kubernetes API or VictoriaLogs. Keep
-`SRE_AGENT_SKIP_KUBERNETES_EVENTS=true` until the VictoriaLogs field mapping is
-confirmed. After that, set `SRE_AGENT_SKIP_KUBERNETES_EVENTS=false`,
+Kubernetes events can come from either the Kubernetes API or VictoriaLogs. Set
+`SRE_AGENT_SKIP_KUBERNETES_EVENTS=false`,
 `SRE_AGENT_KUBERNETES_EVENTS_PROVIDER=auto`, `VICTORIALOGS_URL`, and
 `VICTORIALOGS_KUBERNETES_EVENTS_QUERY_TEMPLATE`. The collector normalizes
 VictoriaLogs rows into the existing `kubernetes.events` shape and reuses the
 same `probe_failure_count`, `failed_scheduling_count`, `killing_event_count`,
-and `image_pull_failure_count` feature fields.
+and `image_pull_failure_count` feature fields. If kubectl workload/pod inspect
+times out but VictoriaLogs events are available, the row is written with
+`kubernetes.status=events_only`. In that mode risk and inspect only use event
+signals, not replicas, pod phase, current restart count, or rollout state.
 
 For the current `pro` VictoriaLogs stream, Kubernetes event rows use fields like
 `log_type=k8s_events`, `namespace=pro`, `kind=Pod`, `name=<pod-name>`,

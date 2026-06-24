@@ -617,19 +617,6 @@
       ]
     },
     {
-      "service_id": "storehub-sh-connector-service",
-      "newrelic_app_name": "StoreHub SH Connector Service",
-      "newrelic_app_id": "1054683071",
-      "github_repo": "storehubnet/StoreHub-SH-Connector-Service",
-      "eks_deployment": null,
-      "eks_namespace": "pro",
-      "k8s_mapping_status": "missing",
-      "description": "StoreHub SH Connector Service Service",
-      "tags": [
-        "service"
-      ]
-    },
-    {
       "service_id": "subscription-adapter-infra-svc",
       "newrelic_app_name": "subscription_adapter-infra-svc",
       "newrelic_app_id": "981461197",

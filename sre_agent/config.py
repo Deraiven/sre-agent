@@ -81,7 +81,7 @@ def load_config() -> AgentConfig:
         skip_github=env_bool("SRE_AGENT_SKIP_GITHUB", True),
         skip_kubernetes=env_bool("SRE_AGENT_SKIP_KUBERNETES", False),
         backfill_skip_kubernetes=env_bool("SRE_AGENT_BACKFILL_SKIP_KUBERNETES", True),
-        skip_kubernetes_events=env_bool("SRE_AGENT_SKIP_KUBERNETES_EVENTS", True),
+        skip_kubernetes_events=env_bool("SRE_AGENT_SKIP_KUBERNETES_EVENTS", False),
         kubectl_timeout_seconds=env_int("SRE_AGENT_KUBECTL_TIMEOUT_SECONDS", 15),
         mark_anomalies_after_collection=env_bool("SRE_AGENT_MARK_ANOMALIES_AFTER_COLLECTION", True),
         gap_recovery_enabled=env_bool("SRE_AGENT_GAP_RECOVERY_ENABLED", True),

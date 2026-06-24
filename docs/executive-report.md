@@ -20,7 +20,7 @@ SRE Agent 的目标是把线上稳定性工作从“告警后人工排查”推�
 
 | 模块 | 完成情况 |
 | --- | --- |
-| 服务目录 | 已完成 52 个生产服务 mapping，包含 New Relic、GitHub、Kubernetes、Prometheus、SLO、tags 等上下文 |
+| 服务目录 | 已完成 51 个生产服务 mapping，包含 New Relic、GitHub、Kubernetes、Prometheus、SLO、tags 等上下文 |
 | 历史数据回填 | 已支持近 30 天 New Relic + Prometheus 15 分钟窗口回填 |
 | 实时采集 | 已支持服务启动后每 15 分钟自动采集最近完整窗口 |
 | Gap recovery | runner 负责最近 24 小时内的小缺口自愈，大量历史缺口由独立 historical backfill 进程处理，避免拖慢实时采集 |

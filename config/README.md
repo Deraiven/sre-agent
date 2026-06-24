@@ -13,7 +13,7 @@ Agent v1 collectors and incident inspect flow.
 
 ## Current Catalog Status
 
-`service-catalog.yaml` has 52 services. Required runtime fields are present for
+`service-catalog.yaml` has 51 services. Required runtime fields are present for
 New Relic, GitHub, Kubernetes, Prometheus, SLO defaults, dependencies, runbooks,
 and tags.
 
@@ -60,4 +60,3 @@ Before using the catalog as an authoritative production source, review:
 - `kubernetes.workload_name` for services with `mapping_status: missing`.
 - `dependencies.downstream` and `dependencies.upstream`.
 - `runbooks`.
-
