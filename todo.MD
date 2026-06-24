@@ -1,6 +1,6 @@
 # SRE Agent TODO
 
-Updated: 2026-06-12
+Updated: 2026-06-23
 
 This file tracks known limitations, discovered issues, and next implementation
 work for the SRE Agent. Keep it current when behavior, config, or docs change.
@@ -11,11 +11,11 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | --- | --- | --- |
 | 30d metric backfill | Done | New Relic + Prometheus 15m windows are stored in PostgreSQL |
 | Realtime runner | Working | Runs every 15m with 60m lookback and 24h gap scan |
-| Gap recovery | Working, needs improvement | Bounded to 8 windows per run; can take many cycles to catch up |
+| Gap recovery | Working | Runner is bounded to near-term gaps; historical gaps are handled by a standalone backfill worker |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 52 services mapped; owners/SLOs still need human review |
 | Dynamic service baselines | Working | Rule-based seasonal baselines exist; ML-driven dynamic baselines are P0 |
-| Transaction baselines | Done, manual | `transaction_baselines` built for 52 services, 1403 rows total |
+| Transaction baselines | Done, manual refresh | `transaction_baselines` built for 52 services, 1403 rows total |
 | Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
 | Launchd local runtime | Added | `ops/launchd` can keep local service and tunnel alive |
@@ -101,12 +101,13 @@ First training batch:
 
 | Priority | Issue | Impact | Current workaround |
 | --- | --- | --- | --- |
-| P0 | Collector worker is single-threaded | Large backlog still drains slowly, although API no longer blocks | Add concurrency limits and per-source timeout budgets |
+| P0 | Realtime Kubernetes inspect can make fresh jobs slow | Realtime windows can lag when `kubectl` calls hang or the private API is slow | Keep kubectl timeout low; temporarily set `SRE_AGENT_SKIP_KUBERNETES=true` when catching up |
 | P1 | Logs/error groups are not integrated into inspect response | RCA may miss log-only failures | Add New Relic logs/error groups to inspect v3 |
 | P1 | Async inspect worker is in-process | Production should separate long trace work from API replicas | Deploy supervised worker or Kubernetes worker replica |
 | P1 | Local Kubernetes access depends on jumpserver tunnel/VPN routing | K8s evidence fails when tunnel or route is down | Run tunnel or deploy agent inside cluster |
 | P1 | Direct OpenVPN route can miss EKS private API IPs | `kubectl` timed out when `192.168.4.238/192.168.5.105` routed via `en0` | Add `192.168.0.0/16` route through OpenVPN or use tunnel |
 | P1 | Transaction baseline is manual | Runner does not refresh it automatically | Call `/baseline/recompute_transactions` manually |
+| P1 | Historical backfill has no deployed CronJob yet | The script exists, but scheduling still needs cron or cluster wiring | Run `scripts/historical_gap_backfill.py` from cron or Kubernetes CronJob |
 | P2 | Owner/SLO values are inferred | Catalog is usable but not authoritative | Service owner review required |
 | P2 | Some services have zero transaction baseline rows | Three services returned zero New Relic Transaction rows | Treat as no transaction evidence, not API failure |
 | P2 | Trace evidence is summary-level | It is not a full waterfall or span graph | Use trace hotspots as direction, verify in New Relic |
@@ -261,9 +262,10 @@ Acceptance criteria:
 | Priority | Task | Status |
 | --- | --- | --- |
 | P1 | Support manual targeted retry by existing failed `collection_jobs.id` | pending |
-| P1 | Add collector concurrency limits and per-source timeout budgets | pending |
+| P1 | Add per-source timeout budgets inside one collector job | pending |
 | P2 | Add daily baseline refresh job | pending |
 | P2 | Add daily transaction baseline refresh job | pending |
+| P2 | Deploy historical gap backfill as cron/CronJob | pending |
 
 ## Productionization Backlog
 
@@ -318,6 +320,12 @@ Acceptance criteria:
   - persisted `incident_inspection_feedback`.
 - Added `transaction_baselines` table.
 - Added `POST /baseline/recompute_transactions`.
+- Added multi-worker collection with `SRE_AGENT_WORKER_CONCURRENCY`.
+- Added `SRE_AGENT_COLLECTION_TIMEOUT_SECONDS` and `SRE_AGENT_KUBECTL_TIMEOUT_SECONDS`.
+- Changed runner gap recovery to a short near-term self-healing window.
+- Added `scripts/historical_gap_backfill.py` for historical gaps outside the runner window.
+- Added `scripts/watch_service.py` watchdog for local service restarts.
+- Added `AGENT.md` coding/operations guide.
 - Built full transaction baseline:
   - services queried: 52
   - baseline rows: 1403

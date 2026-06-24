@@ -79,9 +79,21 @@ python3 scripts/collect_windows.py \
 The service wraps the existing collector in a long-running process. It starts a
 scheduler and collector worker by default, every 15 minutes. Each scheduler run
 records a `runner_runs` row, enqueues `collection_jobs` for the last 60 minutes
-of complete 15-minute windows, then scans the previous 24 hours for missing,
-partial, or failed windows and enqueues up to 8 prioritized gap-recovery jobs.
+of complete 15-minute windows, then scans only the recent runner-owned gap
+window for missing, partial, or failed windows and enqueues up to 8 prioritized
+near-term gap-recovery windows. Large historical gap recovery runs separately,
+so it cannot starve realtime collection workers.
 The API returns quickly while the worker drains jobs in the background.
+
+For historical gaps outside the runner gap window, run the standalone worker
+from cron or a Kubernetes CronJob:
+
+```bash
+python3 scripts/historical_gap_backfill.py --history-days 15 --exclude-recent-hours 24
+```
+
+It checks for gaps, calls the optimized bulk collector only when needed, and
+exits without creating runner `collection_jobs`.
 
 For local `storehub-pro` Kubernetes inspect, start the jumpserver SOCKS tunnel
 in another terminal first:

@@ -23,7 +23,7 @@ SRE Agent 的目标是把线上稳定性工作从“告警后人工排查”推�
 | 服务目录 | 已完成 52 个生产服务 mapping，包含 New Relic、GitHub、Kubernetes、Prometheus、SLO、tags 等上下文 |
 | 历史数据回填 | 已支持近 30 天 New Relic + Prometheus 15 分钟窗口回填 |
 | 实时采集 | 已支持服务启动后每 15 分钟自动采集最近完整窗口 |
-| Gap recovery | 已支持扫描最近 24 小时缺失窗口并自动补采，降低隧道或服务短暂中断影响 |
+| Gap recovery | runner 负责最近 24 小时内的小缺口自愈，大量历史缺口由独立 historical backfill 进程处理，避免拖慢实时采集 |
 | 动态基线 | 已支持按服务计算 baseline，避免所有服务使用同一套固定阈值 |
 | 异常标注 | 已支持基于 SLO、动态基线、资源和 Kubernetes 信号标记异常窗口 |
 | Risk scoring | 已支持查询服务当前风险等级和主要风险原因 |
@@ -51,7 +51,7 @@ SRE Agent 的目标是把线上稳定性工作从“告警后人工排查”推�
 | 部署事件暂未接入 | 当前用 GitHub master commit 作为变更代理，只能作为 inferred 证据 |
 | owner 和部分 SLO 仍需人工确认 | 配置已补齐，但业务 owner 和正式 SLO 需要服务团队审核 |
 | Trace 目前是摘要级别 | 可以辅助 RCA，但还不是完整 waterfall 级追踪分析 |
-| Runner 与 API 暂在同一进程 | 长时间采集可能影响调度稳定性，后续应拆分 worker |
+| Runner 与 API 暂在同一进程 | 已通过后台 worker 降低阻塞风险，但生产环境仍建议拆成独立 Deployment/worker |
 
 ## 五、下一步建议
 

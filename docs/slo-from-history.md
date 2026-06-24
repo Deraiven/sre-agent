@@ -253,10 +253,12 @@ incident 标签优先级最高，可覆盖普通 anomaly 标签。
 
 ```mermaid
 flowchart TD
-    Schedule["Every 15m / daily backfill"] --> QueryNR["Query New Relic windows"]
-    Schedule --> QueryProm["Query Prometheus resource windows"]
-    Schedule --> QueryK8s["Collect Kubernetes events/status"]
-    Schedule --> QueryGitHub["Collect master commits"]
+    Runner["Every 15m service runner"] --> QueryNR["Query New Relic windows"]
+    Runner --> QueryProm["Query Prometheus resource windows"]
+    Runner --> QueryK8s["Collect Kubernetes events/status"]
+    Runner --> QueryGitHub["Collect master commits"]
+    HistoricalBackfill["Standalone historical gap backfill"] --> QueryNR
+    HistoricalBackfill --> QueryProm
     QueryNR --> Aggregate["Aggregate windows"]
     QueryProm --> Aggregate
     QueryK8s --> Aggregate
@@ -272,7 +274,7 @@ flowchart TD
 | 任务 | 建议 |
 | --- | --- |
 | 首次初始化 | 拉取最近 30 天，按 15m 和 1h 切窗 |
-| 每日回填 | 每天重新拉取最近 48 小时，修正延迟到达的数据 |
+| 历史缺口回填 | 用独立 cron/CronJob 扫描 runner gap window 之外的半个月区间，有缺口才调用 bulk collector |
 | 长期保存 | 保存聚合窗口、标签、基线，不依赖原始监控留存 |
 | 版本化 | baseline 和 label rule 都要带 version，方便重算 |
 

@@ -40,6 +40,41 @@ export KUBECTL_PROXY_URL=socks5://127.0.0.1:1080
 python3 -m sre_agent.service --host 127.0.0.1 --port 8080
 ```
 
+For local long-running collection, prefer the watchdog so the service is
+restarted automatically if the API process exits or `/health` stops responding:
+
+```bash
+SRE_AGENT_SKIP_KUBERNETES=true \
+SRE_AGENT_KUBECTL_TIMEOUT_SECONDS=15 \
+python3 scripts/watch_service.py --host 127.0.0.1 --port 8080 --skip-kubernetes
+```
+
+To collect Kubernetes inspect only for realtime windows while keeping historical
+catch-up fast, run the watchdog without the global `--skip-kubernetes` flag and
+leave backfill skipping enabled:
+
+```bash
+SRE_AGENT_BACKFILL_SKIP_KUBERNETES=true \
+SRE_AGENT_KUBECTL_TIMEOUT_SECONDS=15 \
+python3 scripts/watch_service.py --host 127.0.0.1 --port 8080 --skip-backfill-kubernetes
+```
+
+With the default settings, fresh realtime jobs include Kubernetes inspect.
+`SRE_AGENT_BACKFILL_SKIP_KUBERNETES=true` only skips Kubernetes for
+`gap_recovery` and stale realtime backlog jobs, so historical recovery cannot
+drag the current 15m window behind.
+
+The watchdog writes:
+
+| File | Purpose |
+| --- | --- |
+| `logs/sre-agent-watchdog.jsonl` | Restart, health-check, and signal events |
+| `logs/sre-agent-service.log` | stdout/stderr from `python3 -m sre_agent.service` |
+
+When the service exits, the next watchdog loop records the return code and
+starts a fresh process. On restart, the service returns interrupted
+`collection_jobs` from `running` to `queued`.
+
 ## Runner Behavior
 
 The runner starts automatically when `SRE_AGENT_RUNNER_ENABLED=true`.
@@ -48,8 +83,8 @@ Each run:
 
 1. Creates a `runner_runs` audit record.
 2. Enqueues realtime `collection_jobs` for the latest complete range.
-3. Scans recent history for missing, partial, or failed windows.
-4. Enqueues bounded `gap_recovery` jobs, prioritizing partial windows first.
+3. Scans only the recent runner-owned gap window for missing, partial, or failed windows.
+4. Enqueues bounded `gap_recovery` jobs for near-term self-healing.
 5. Lets the worker execute jobs and mark anomalies after successful writes.
 
 Default settings:
@@ -60,14 +95,58 @@ Default settings:
 | `SRE_AGENT_LOOKBACK_MINUTES` | `60` | Realtime collection covers the latest 60 minutes |
 | `SRE_AGENT_WINDOW_SIZE` | `15m` | Primary training and risk window |
 | `SRE_AGENT_COLLECT_BATCH_SIZE` | `20` | PostgreSQL write batch size |
+| `SRE_AGENT_WORKER_CONCURRENCY` | `3` | Number of collection jobs drained in parallel |
+| `SRE_AGENT_COLLECTION_TIMEOUT_SECONDS` | `300` | Maximum runtime for one collector job |
+| `SRE_AGENT_SKIP_KUBERNETES` | `false` | Global emergency switch to skip all Kubernetes inspect |
+| `SRE_AGENT_BACKFILL_SKIP_KUBERNETES` | `true` | Skip Kubernetes inspect for gap recovery and stale realtime backlog jobs |
+| `SRE_AGENT_SKIP_KUBERNETES_EVENTS` | `true` | Skip Kubernetes event lookup inside inspect collection |
+| `SRE_AGENT_KUBERNETES_EVENTS_PROVIDER` | `auto` | Use `victorialogs` when configured, otherwise `kubectl`; can be `kubectl`, `victorialogs`, or `none` |
+| `VICTORIALOGS_URL` | `https://log.pro.mymyhub.com` | VictoriaLogs base URL for Kubernetes event lookup |
+| `VICTORIALOGS_TENANT` | unset | Optional VictoriaLogs tenant, formatted as `AccountID:ProjectID` |
+| `VICTORIALOGS_KUBERNETES_EVENTS_QUERY_TEMPLATE` | `log_type:k8s_events namespace:{namespace} name:~"{workload_name}-.+"` | LogsQL template used to query Kubernetes events; supports `{namespace}`, `{workload_name}`, `{selector}`, `{pod_names}`, `{start}`, `{end}` |
+| `SRE_AGENT_KUBECTL_TIMEOUT_SECONDS` | `15` | Per-command timeout for Kubernetes inspect |
 | `SRE_AGENT_MARK_ANOMALIES_AFTER_COLLECTION` | `true` | Label collected windows after successful collection |
 | `SRE_AGENT_GAP_RECOVERY_ENABLED` | `true` | Enable automatic gap recovery |
-| `SRE_AGENT_GAP_LOOKBACK_HOURS` | `24` | Scan this much history for gaps |
+| `SRE_AGENT_GAP_LOOKBACK_HOURS` | `24` | Scan this much recent history for runner-owned gaps |
 | `SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN` | `8` | Recover at most this many 15m windows per runner cycle |
+| `SRE_AGENT_GAP_SERVICE_CHUNK_SIZE` | `20` | Number of services collected by one gap recovery job |
+| `SRE_AGENT_GAP_RECOVERY_ORDER` | `newest` | Recover recent gaps first inside the runner-owned window |
+| `SRE_AGENT_HISTORICAL_BACKFILL_DAYS` | `15` | Historical gap scan window for the standalone backfill worker |
+| `SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS` | `24` | Recent window reserved for the service runner |
+| `SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS` | `24` | Maximum bulk collector range per historical backfill call |
 
-Gap recovery is deliberately budgeted. If the tunnel or a telemetry source is
-down for multiple hours, the agent catches up gradually instead of issuing a
-large burst of New Relic, Prometheus, and Kubernetes queries.
+Gap recovery inside the service is deliberately small. The runner owns realtime
+collection plus a short self-healing window, so large historical recovery cannot
+starve fresh 15m windows.
+
+Historical recovery is handled by a separate process:
+
+```bash
+python3 scripts/historical_gap_backfill.py \
+  --history-days 15 \
+  --exclude-recent-hours 24 \
+  --max-range-hours 24 \
+  --max-ranges 1
+```
+
+The script checks the historical range outside the runner gap window. If no
+missing windows are found it exits with `status=noop`; if gaps exist it calls
+`scripts/backfill_15m_bulk.py` for coalesced missing ranges and exits. This is
+safe to run from cron or a Kubernetes CronJob because it does not enqueue
+`collection_jobs` and does not consume runner workers.
+
+Example cron entry:
+
+```cron
+*/30 * * * * cd /Users/storehub/Documents/sre-agent && /usr/bin/env python3 scripts/historical_gap_backfill.py >> logs/historical-gap-backfill.log 2>&1
+```
+
+Workers claim jobs by effective priority instead of raw creation time. Manual
+jobs run first, fresh realtime windows run before near-term recovery and run
+Kubernetes inspect by default, targeted `gap_recovery` jobs run before stale
+realtime backlog, and old realtime jobs are kept as the lowest-priority
+fallback. This keeps the latest 15m windows current while using spare worker
+capacity only for small recent gaps.
 
 The API no longer blocks on long collector work. `/collect/run` returns
 `202 Accepted` with a `runner_run_id` and `job_ids`; the worker drains queued
@@ -89,8 +168,13 @@ curl 'http://127.0.0.1:8080/data/coverage?lookback_hours=24'
 curl 'http://127.0.0.1:8080/gaps?lookback_hours=24&limit=20'
 ```
 
-`/runner/status` reports scheduler settings, `worker_running`, `current_job`,
-`job_counts_24h`, `last_result`, `last_gap_recovery`, and `next_run_at`.
+`/runner/status` reports scheduler settings, `worker_running`,
+`worker_concurrency`, `worker_count`, `current_job`, `current_jobs`,
+`collection_timeout_seconds`, `skip_kubernetes`, `backfill_skip_kubernetes`,
+`gap_service_chunk_size`, `job_counts_24h`, `last_result`,
+`last_gap_recovery`, and `next_run_at`. Each `current_jobs` entry includes
+`skip_kubernetes` after the worker decides whether that job is realtime or
+backfill.
 
 `/runner/runs` shows each scheduler/manual run with job counts and duration
 timestamps. `/collection/jobs` shows per-window/service chunk status, attempts,
@@ -157,6 +241,20 @@ python3 scripts/collect_windows.py \
   --kubectl-proxy-url socks5://127.0.0.1:1080
 ```
 
+Kubernetes events can come from either the Kubernetes API or VictoriaLogs. Keep
+`SRE_AGENT_SKIP_KUBERNETES_EVENTS=true` until the VictoriaLogs field mapping is
+confirmed. After that, set `SRE_AGENT_SKIP_KUBERNETES_EVENTS=false`,
+`SRE_AGENT_KUBERNETES_EVENTS_PROVIDER=auto`, `VICTORIALOGS_URL`, and
+`VICTORIALOGS_KUBERNETES_EVENTS_QUERY_TEMPLATE`. The collector normalizes
+VictoriaLogs rows into the existing `kubernetes.events` shape and reuses the
+same `probe_failure_count`, `failed_scheduling_count`, `killing_event_count`,
+and `image_pull_failure_count` feature fields.
+
+For the current `pro` VictoriaLogs stream, Kubernetes event rows use fields like
+`log_type=k8s_events`, `namespace=pro`, `kind=Pod`, `name=<pod-name>`,
+`reason`, `level`, `count`, `_time`, and `_msg`. The default template filters by
+namespace and pod-name prefix derived from the service workload name.
+
 ## Baseline And Anomaly Operations
 
 ```bash
@@ -222,20 +320,24 @@ comparisons:
 
 ## Dynamic Baseline Model Framework
 
-P0 model endpoints are available before actual training is implemented:
+P0 model endpoints are available. The current implementation can create
+`seasonal_quantile_v1` training runs, persist evaluated per-service/per-metric
+models, write seasonal bucket quantiles, and keep models inactive until they are
+validated and explicitly activated.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /models/quality` | Check coverage/readiness for unsupervised seasonal baseline training |
-| `POST /models/train` | Create a training run record; default `dry_run=true` only records readiness |
+| `POST /models/train` | Dry-run readiness or persist evaluated `seasonal_quantile_v1` models |
 | `GET /models/training_runs` | List training and dry-run records |
-| `GET /models` | List persisted model versions when real training is implemented |
+| `GET /models` | List persisted model versions and activation state |
 | `POST /risk/feedback` | Store false positive, false negative, or confirmed incident labels |
 
 The initial model type is `seasonal_quantile_v1`. It is unsupervised and learns
 normal service behavior by `weekday + hour + 15m minute_slot`. Training writes
-models, buckets, and evaluation rows. Keep `activate=false` while validating
-backtest quality; until a model is activated, `/risk/score` returns
+models, buckets, and evaluation rows when `dry_run=false`. Keep
+`activate=false` while validating backtest quality; until a model is activated,
+`/risk/score` returns
 `dynamic_baseline_model.status=not_trained` and continues using risk v2 rule
 baselines as fallback.
 
@@ -282,16 +384,17 @@ curl -X POST http://127.0.0.1:8080/inspect/incident/1/feedback \
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `curl: Failed to connect to 127.0.0.1:8080` | Service process is not running | Restart `python3 -m sre_agent.service ...` |
+| Service exits repeatedly | Unhandled service failure or local dependency issue | Run `scripts/watch_service.py` and inspect `logs/sre-agent-service.log` plus `logs/sre-agent-watchdog.jsonl` |
 | `proxyconnect tcp ... 127.0.0.1:1080` | Jumpserver SOCKS tunnel is down | Restart the SSH tunnel |
 | K8s status is `error` for most services | Missing proxy/profile or tunnel failure | Check `/config`, `KUBECTL_AWS_PROFILE`, and `KUBECTL_PROXY_URL` |
 | New Relic status is `error` | Missing or invalid `NEW_RELIC_API_KEY` | Export a valid key and restart service |
-| Runner `running=false` after `next_run_at` passed | Runner thread or service lifecycle issue | Restart service; future work should add a watchdog |
+| Runner `running=false` after `next_run_at` passed | Runner thread or service lifecycle issue | Restart service or run `scripts/watch_service.py` |
 | Worker not draining queued jobs | Worker thread stopped or service is stale | Check `/runner/status.worker_running`, then restart the service |
 | Gap recovery does not run | Gap recovery disabled or no incomplete windows found | Check `last_gap_recovery`, `gap_recovery_enabled`, and `/collection/jobs?status=failed` |
 
 ## Known V1 Limitations
 
 - API, scheduler, and worker still share one local process, but long collector work runs in a worker subprocess instead of blocking API requests.
-- Kubernetes inspect runs per service/window and can make full-service collection slow.
-- Collector worker concurrency is currently one job at a time.
+- Kubernetes inspect runs for current realtime windows; historical gap recovery and stale realtime backlog skip it by default.
+- Collector worker concurrency is configurable with `SRE_AGENT_WORKER_CONCURRENCY`; keep it conservative when Kubernetes inspect is enabled or telemetry APIs are rate limited.
 - Local access to `storehub-pro` depends on a manually maintained SSH tunnel.

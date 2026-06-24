@@ -68,6 +68,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kubectl-context", default=os.environ.get("KUBECTL_CONTEXT"))
     parser.add_argument("--kubectl-aws-profile", default=os.environ.get("KUBECTL_AWS_PROFILE"))
     parser.add_argument("--kubectl-proxy-url", default=os.environ.get("KUBECTL_PROXY_URL"))
+    parser.add_argument(
+        "--kubectl-timeout-seconds",
+        type=int,
+        default=int(os.environ.get("KUBECTL_TIMEOUT_SECONDS", "15")),
+        help="Maximum seconds to wait for each kubectl command.",
+    )
+    parser.add_argument("--victorialogs-url", default=os.environ.get("VICTORIALOGS_URL"))
+    parser.add_argument("--victorialogs-tenant", default=os.environ.get("VICTORIALOGS_TENANT"))
+    parser.add_argument(
+        "--kubernetes-events-provider",
+        choices=("auto", "kubectl", "victorialogs", "none"),
+        default=os.environ.get("SRE_AGENT_KUBERNETES_EVENTS_PROVIDER", "auto").lower(),
+        help="Source for Kubernetes events. auto prefers VictoriaLogs when URL and query template are configured.",
+    )
+    parser.add_argument(
+        "--victorialogs-kubernetes-events-query-template",
+        default=os.environ.get("VICTORIALOGS_KUBERNETES_EVENTS_QUERY_TEMPLATE"),
+        help="LogsQL template for Kubernetes events. Supports {namespace}, {workload_name}, {selector}, {pod_names}, {start}, {end}.",
+    )
     parser.add_argument("--skip-github", action="store_true")
     parser.add_argument("--github-commit-detail-limit", type=int, default=5)
     return parser.parse_args()
@@ -326,6 +345,7 @@ def resolve_kubectl_context(cluster: str | None, explicit_context: str | None) -
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            timeout=10,
         )
         contexts = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
     except Exception:
@@ -336,7 +356,7 @@ def resolve_kubectl_context(cluster: str | None, explicit_context: str | None) -
     return cluster
 
 
-def kubeconfig_with_aws_profile(context: str | None, aws_profile: str | None) -> str | None:
+def kubeconfig_with_aws_profile(context: str | None, aws_profile: str | None, timeout_seconds: int) -> str | None:
     if not context or not aws_profile:
         return None
     completed = subprocess.run(
@@ -345,6 +365,7 @@ def kubeconfig_with_aws_profile(context: str | None, aws_profile: str | None) ->
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=timeout_seconds,
     )
     config = json.loads(completed.stdout)
     context_entry = next((item for item in config.get("contexts", []) if item.get("name") == context), None)
@@ -373,6 +394,7 @@ def kubectl_json(
     context: str | None = None,
     kubeconfig: str | None = None,
     proxy_url: str | None = None,
+    timeout_seconds: int = 15,
 ) -> dict:
     command = ["kubectl"]
     if context:
@@ -390,6 +412,7 @@ def kubectl_json(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        timeout=timeout_seconds,
     )
     if completed.returncode != 0:
         raise RuntimeError(
@@ -428,6 +451,113 @@ def event_timestamp(event: dict) -> datetime | None:
     return None
 
 
+def first_present(payload: dict, keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in payload and payload[key] not in (None, ""):
+            return payload[key]
+    return None
+
+
+def victorialogs_query(base_url: str, query: str, start: datetime, end: datetime, tenant: str | None, limit: int) -> list[dict]:
+    endpoint = base_url.rstrip("/") + "/select/logsql/query"
+    params = {
+        "query": query,
+        "start": format_time(start),
+        "end": format_time(end),
+        "limit": str(limit),
+    }
+    if tenant:
+        params["tenant"] = tenant
+    request = urllib.request.Request(endpoint + "?" + urllib.parse.urlencode(params))
+    with urllib.request.urlopen(request, timeout=20) as response:
+        body = response.read().decode("utf-8")
+
+    rows: list[dict] = []
+    stripped = body.strip()
+    if not stripped:
+        return rows
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+        if isinstance(parsed, dict):
+            if isinstance(parsed.get("data"), list):
+                return [item for item in parsed["data"] if isinstance(item, dict)]
+            return [parsed]
+    except json.JSONDecodeError:
+        pass
+
+    for line in stripped.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def normalize_victorialogs_kubernetes_event(row: dict) -> dict:
+    ts = first_present(row, ("_time", "time", "timestamp", "eventTime", "lastTimestamp", "firstTimestamp"))
+    parsed_ts = parse_kubernetes_time(str(ts)) if ts else None
+    return {
+        "timestamp": format_time(parsed_ts) if parsed_ts else None,
+        "reason": first_present(row, ("reason", "event_reason", "kubernetes_reason", "k8s_event_reason")),
+        "type": first_present(row, ("type", "level", "event_type", "kubernetes_type", "k8s_event_type")),
+        "message": first_present(row, ("message", "_msg", "msg", "log", "event_message")),
+        "involved_kind": first_present(row, ("involved_kind", "involvedObject.kind", "object_kind", "kind")),
+        "involved_name": first_present(row, ("involved_name", "involvedObject.name", "object_name", "name", "pod")),
+        "count": first_present(row, ("count", "event_count")),
+        "source": "victorialogs",
+    }
+
+
+def build_victorialogs_event_query(template: str, namespace: str, workload_name: str, selector: str, pod_names: set[str], start: datetime, end: datetime) -> str:
+    replacements = {
+        "{namespace}": namespace,
+        "{workload_name}": workload_name,
+        "{selector}": selector,
+        "{pod_names}": ",".join(sorted(pod_names)),
+        "{start}": format_time(start),
+        "{end}": format_time(end),
+    }
+    query = template
+    for token, value in replacements.items():
+        query = query.replace(token, value)
+    return query
+
+
+def collect_victorialogs_kubernetes_events(
+    namespace: str,
+    workload_name: str,
+    selector: str,
+    pod_names: set[str],
+    start: datetime,
+    end: datetime,
+    args: argparse.Namespace,
+) -> list[dict]:
+    if not args.victorialogs_url or not args.victorialogs_kubernetes_events_query_template:
+        return []
+    query = build_victorialogs_event_query(
+        args.victorialogs_kubernetes_events_query_template,
+        namespace,
+        workload_name,
+        selector,
+        pod_names,
+        start,
+        end,
+    )
+    rows = victorialogs_query(args.victorialogs_url, query, start, end, args.victorialogs_tenant, limit=200)
+    events = []
+    for row in rows:
+        event = normalize_victorialogs_kubernetes_event(row)
+        involved_name = event.get("involved_name")
+        if involved_name and involved_name not in pod_names and involved_name != workload_name:
+            continue
+        events.append(event)
+    return events
+
+
 def container_state_summary(container_status: dict) -> dict:
     last_state = container_status.get("lastState", {})
     state = container_status.get("state", {})
@@ -463,7 +593,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
     workload_kind = source.get("workload_kind", "Deployment")
     workload_name = source.get("workload_name")
     context = resolve_kubectl_context(source.get("cluster"), args.kubectl_context)
-    kubeconfig = kubeconfig_with_aws_profile(context, args.kubectl_aws_profile)
+    kubeconfig = kubeconfig_with_aws_profile(context, args.kubectl_aws_profile, args.kubectl_timeout_seconds)
     proxy_url = args.kubectl_proxy_url
     errors: list[dict] = []
     try:
@@ -472,6 +602,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             context,
             kubeconfig,
             proxy_url,
+            args.kubectl_timeout_seconds,
         )
         match_labels = workload.get("spec", {}).get("selector", {}).get("matchLabels", {})
         selector = selector_from_match_labels(match_labels)
@@ -485,34 +616,64 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             context,
             kubeconfig,
             proxy_url,
+            args.kubectl_timeout_seconds,
         )
         pods = pods_payload.get("items", [])
         pod_names = {pod.get("metadata", {}).get("name") for pod in pods if pod.get("metadata", {}).get("name")}
         events = []
         if not args.skip_kubernetes_events:
-            events_payload = kubectl_json(["get", "events", "-n", namespace, "-o", "json"], context, kubeconfig, proxy_url)
-            for event in events_payload.get("items", []):
-                involved = event.get("involvedObject", {})
-                involved_name = involved.get("name")
-                involved_kind = involved.get("kind")
-                if involved_name not in pod_names and involved_name != workload_name:
-                    continue
-                ts = event_timestamp(event)
-                if ts and not (start <= ts <= end):
-                    continue
-                reason = event.get("reason")
-                message = event.get("message")
-                events.append(
-                    {
-                        "timestamp": format_time(ts) if ts else None,
-                        "reason": reason,
-                        "type": event.get("type"),
-                        "message": message,
-                        "involved_kind": involved_kind,
-                        "involved_name": involved_name,
-                        "count": event.get("count"),
-                    }
+            provider = args.kubernetes_events_provider
+            can_query_victorialogs = bool(args.victorialogs_url and args.victorialogs_kubernetes_events_query_template)
+            if provider == "none":
+                events = []
+            elif provider in {"auto", "victorialogs"} and can_query_victorialogs:
+                try:
+                    events = collect_victorialogs_kubernetes_events(
+                        namespace,
+                        workload_name,
+                        selector,
+                        pod_names,
+                        start,
+                        end,
+                        args,
+                    )
+                except Exception as exc:  # noqa: BLE001 - event source is best-effort.
+                    errors.append({"source": "victorialogs", "signal": "kubernetes_events", "error": str(exc)})
+                    if provider == "victorialogs":
+                        events = []
+                    else:
+                        provider = "kubectl"
+            if provider == "kubectl" or (provider == "auto" and not can_query_victorialogs):
+                events_payload = kubectl_json(
+                    ["get", "events", "-n", namespace, "-o", "json"],
+                    context,
+                    kubeconfig,
+                    proxy_url,
+                    args.kubectl_timeout_seconds,
                 )
+                for event in events_payload.get("items", []):
+                    involved = event.get("involvedObject", {})
+                    involved_name = involved.get("name")
+                    involved_kind = involved.get("kind")
+                    if involved_name not in pod_names and involved_name != workload_name:
+                        continue
+                    ts = event_timestamp(event)
+                    if ts and not (start <= ts <= end):
+                        continue
+                    reason = event.get("reason")
+                    message = event.get("message")
+                    events.append(
+                        {
+                            "timestamp": format_time(ts) if ts else None,
+                            "reason": reason,
+                            "type": event.get("type"),
+                            "message": message,
+                            "involved_kind": involved_kind,
+                            "involved_name": involved_name,
+                            "count": event.get("count"),
+                            "source": "kubectl",
+                        }
+                    )
 
         pod_summaries = []
         restart_count = 0
@@ -587,6 +748,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             "pods": pod_summaries,
             "events": events,
             "events_collected": not args.skip_kubernetes_events,
+            "events_provider": args.kubernetes_events_provider,
         }, errors
     except Exception as exc:  # noqa: BLE001 - persist collection error as data quality.
         return {"status": "error", **base}, [

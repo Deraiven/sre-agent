@@ -146,8 +146,10 @@ create table collection_jobs (
 );
 ```
 
-Gap recovery 会优先选择已有部分数据但不完整的窗口，再补完全空窗口。服务级
-缺口会进入 `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
+Runner 内的 gap recovery 只负责最近窗口的小缺口自愈。大量历史缺口由
+`scripts/historical_gap_backfill.py` 独立扫描并调用 bulk collector，不进入
+runner 的 `collection_jobs` 队列，避免挤占实时采集 worker。服务级缺口会进入
+near-term `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
 
 ### `service_baselines`
 
@@ -407,10 +409,12 @@ s3://sre-agent-data/
 
 ```mermaid
 flowchart TD
-    Scheduler["15m runner / gap recovery / daily backfill"] --> RunAudit["Write runner_runs"]
+    Scheduler["15m runner / near-term gap recovery"] --> RunAudit["Write runner_runs"]
     RunAudit --> Queue["Enqueue collection_jobs"]
     Queue --> Worker["Collector worker"]
+    HistoricalBackfill["Standalone historical gap backfill"] --> Bulk["Bulk backfill collector"]
     Worker --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
+    Bulk --> Query
     Query --> Snapshot["Write optional raw snapshot to S3"]
     Query --> Aggregate["Aggregate metrics into windows"]
     Aggregate --> Postgres["Write service_metric_windows"]
