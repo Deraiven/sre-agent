@@ -147,6 +147,113 @@ create table if not exists transaction_baselines (
 create index if not exists transaction_baselines_lookup_idx
   on transaction_baselines (service_id, baseline_version, transaction_name);
 
+create table if not exists service_metric_training_runs (
+  id bigserial primary key,
+  model_version text not null,
+  model_type text not null default 'seasonal_quantile_v1',
+  status text not null default 'planned',
+  training_window_start timestamptz not null,
+  training_window_end timestamptz not null,
+  window_size text not null default '15m',
+  service_ids text[],
+  metric_names text[],
+  dry_run boolean not null default true,
+  quality_summary jsonb not null default '{}',
+  error text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists service_metric_training_runs_lookup_idx
+  on service_metric_training_runs (model_version, status, created_at desc);
+
+create table if not exists service_metric_models (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  metric_name text not null,
+  model_version text not null,
+  model_type text not null default 'seasonal_quantile_v1',
+  status text not null default 'created',
+  active boolean not null default false,
+  training_run_id bigint references service_metric_training_runs(id),
+  training_window_start timestamptz not null,
+  training_window_end timestamptz not null,
+  window_size text not null default '15m',
+  feature_spec jsonb not null default '{}',
+  model_params jsonb not null default '{}',
+  quality_summary jsonb not null default '{}',
+  artifact_ref_id bigint,
+  created_at timestamptz not null default now(),
+  activated_at timestamptz
+);
+
+create unique index if not exists service_metric_models_unique_idx
+  on service_metric_models (service_id, metric_name, model_version);
+
+create index if not exists service_metric_models_active_idx
+  on service_metric_models (service_id, metric_name, active, created_at desc);
+
+create table if not exists service_metric_model_buckets (
+  id bigserial primary key,
+  model_id bigint not null references service_metric_models(id) on delete cascade,
+  baseline_scope text not null,
+  day_of_week int,
+  hour_of_day int,
+  minute_slot int,
+  traffic_bucket text,
+  p50 double precision,
+  p75 double precision,
+  p90 double precision,
+  p95 double precision,
+  p99 double precision,
+  median double precision,
+  mad double precision,
+  sample_count int not null default 0,
+  coverage_pct double precision,
+  confidence text not null default 'unknown',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists service_metric_model_buckets_lookup_idx
+  on service_metric_model_buckets (model_id, baseline_scope, day_of_week, hour_of_day, minute_slot);
+
+create table if not exists service_metric_model_evaluations (
+  id bigserial primary key,
+  model_id bigint references service_metric_models(id) on delete cascade,
+  training_run_id bigint references service_metric_training_runs(id),
+  service_id text references services(service_id),
+  metric_name text,
+  model_version text not null,
+  evaluation_window_start timestamptz not null,
+  evaluation_window_end timestamptz not null,
+  status text not null default 'created',
+  metrics jsonb not null default '{}',
+  notes jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists service_metric_model_evaluations_lookup_idx
+  on service_metric_model_evaluations (model_version, service_id, metric_name, created_at desc);
+
+create table if not exists risk_feedback_labels (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  window_start timestamptz,
+  window_end timestamptz,
+  risk_version text,
+  model_version text,
+  label_type text not null,
+  actual_severity text,
+  false_positive boolean,
+  false_negative boolean,
+  payload jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists risk_feedback_labels_service_time_idx
+  on risk_feedback_labels (service_id, created_at desc);
+
 create table if not exists anomaly_windows (
   id bigserial primary key,
   service_id text not null references services(service_id),

@@ -107,7 +107,14 @@ def list_service_ids(database_url: str) -> list[str]:
     return psql_json(database_url, sql) or []
 
 
-def find_recoverable_windows(config: AgentConfig, scan_start: datetime, scan_end: datetime) -> list[RecoverableWindow]:
+def find_recoverable_windows(
+    config: AgentConfig,
+    scan_start: datetime,
+    scan_end: datetime,
+    oldest_first: bool = False,
+) -> list[RecoverableWindow]:
+    window_order = "asc" if oldest_first else "desc"
+    kubernetes_gap_check = "false" if config.backfill_skip_kubernetes else "true"
     sql = f"""
 with services_ordered as (
   select service_id from services
@@ -127,6 +134,7 @@ actual as (
     window_start,
     service_id,
     newrelic->>'status' as newrelic_status,
+    prometheus_resources->>'status' as prometheus_status,
     kubernetes->>'status' as kubernetes_status
   from service_metric_windows
   where window_size = {sql_literal(config.window_size)}
@@ -138,11 +146,13 @@ coverage as (
     w.window_start,
     s.service_id,
     a.newrelic_status,
+    a.prometheus_status,
     a.kubernetes_status,
     case
       when a.service_id is null then true
       when coalesce(a.newrelic_status, '') <> 'collected' then true
-      when coalesce(a.kubernetes_status, '') not in ('collected', 'missing') then true
+      when coalesce(a.prometheus_status, 'collected') not in ('collected', 'missing') then true
+      when {kubernetes_gap_check} and coalesce(a.kubernetes_status, '') not in ('collected', 'missing') then true
       else false
     end as needs_recovery
   from expected_windows w
@@ -157,7 +167,7 @@ summary as (
   from coverage
   group by window_start
 )
-select coalesce(json_agg(row_to_json(x) order by x.recovery_priority, x.window_start desc), '[]'::json)
+select coalesce(json_agg(row_to_json(x) order by x.missing_count desc, x.window_start {window_order}), '[]'::json)
 from (
   select
     s.window_start,
@@ -165,7 +175,7 @@ from (
     s.rows,
     sc.expected,
     coalesce(s.missing_service_ids, '{{}}'::text[]) as missing_service_ids,
-    case when s.rows > 0 then 0 else 1 end as recovery_priority
+    coalesce(array_length(s.missing_service_ids, 1), 0)::int as missing_count
   from summary s
   cross join service_count sc
   where coalesce(array_length(s.missing_service_ids, 1), 0) > 0
@@ -352,13 +362,25 @@ def enqueue_collection_jobs(
     return job_ids
 
 
-def claim_next_collection_job(database_url: str) -> dict[str, Any] | None:
+def claim_next_collection_job(config: AgentConfig) -> dict[str, Any] | None:
+    realtime_start, _ = aligned_window_range(utc_now(), config.window_size, config.runner_lookback_minutes)
     sql = """
 with picked as (
   select id
   from collection_jobs
   where status = 'queued'
-  order by priority desc, window_start desc, created_at
+    order by
+    case
+      when job_type = 'manual' then 400
+      when job_type = 'realtime' and window_end > {realtime_start} then 300
+      when job_type = 'gap_recovery' then 200
+      when job_type = 'realtime' then 100
+      else 0
+    end desc,
+    priority desc,
+    case when job_type = 'gap_recovery' then window_start end asc,
+    case when job_type <> 'gap_recovery' then window_start end desc,
+    created_at
   limit 1
   for update skip locked
 )
@@ -369,8 +391,8 @@ set status = 'running',
 from picked
 where j.id = picked.id
 returning row_to_json(j);
-"""
-    return psql_json(database_url, sql)
+""".format(realtime_start=sql_literal(format_time(realtime_start)))
+    return psql_json(config.database_url, sql)
 
 
 def reset_interrupted_collection_jobs(database_url: str) -> None:
@@ -432,6 +454,7 @@ def run_collection(
     end: datetime,
     service_ids: list[str] | None = None,
     dry_run: bool = False,
+    skip_kubernetes: bool | None = None,
 ) -> RunResult:
     started_at = format_time(utc_now())
     command = [
@@ -460,10 +483,27 @@ def run_collection(
         command.extend(["--kubectl-aws-profile", config.kubectl_aws_profile])
     if config.kubectl_proxy_url:
         command.extend(["--kubectl-proxy-url", config.kubectl_proxy_url])
+    if config.victorialogs_url:
+        command.extend(["--victorialogs-url", config.victorialogs_url])
+    if config.victorialogs_tenant:
+        command.extend(["--victorialogs-tenant", config.victorialogs_tenant])
+    if config.kubernetes_events_provider:
+        command.extend(["--kubernetes-events-provider", config.kubernetes_events_provider])
+    if config.victorialogs_kubernetes_events_query_template:
+        command.extend(
+            [
+                "--victorialogs-kubernetes-events-query-template",
+                config.victorialogs_kubernetes_events_query_template,
+            ]
+        )
     if config.skip_github:
         command.append("--skip-github")
+    effective_skip_kubernetes = config.skip_kubernetes if skip_kubernetes is None else skip_kubernetes
+    if effective_skip_kubernetes:
+        command.append("--skip-kubernetes")
     if config.skip_kubernetes_events:
         command.append("--skip-kubernetes-events")
+    command.extend(["--kubectl-timeout-seconds", str(config.kubectl_timeout_seconds)])
     if dry_run:
         command.append("--dry-run")
     for service_id in service_ids or []:
@@ -481,7 +521,7 @@ def run_collection(
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=max(300, min(1800, config.runner_interval_seconds * 2)),
+            timeout=config.collection_timeout_seconds,
         )
         status = "succeeded" if completed.returncode == 0 else "failed"
         return RunResult(
@@ -510,6 +550,19 @@ def run_collection(
         )
 
 
+def should_skip_kubernetes_for_job(config: AgentConfig, job_type: str, end: datetime) -> bool:
+    if config.skip_kubernetes:
+        return True
+    if job_type != "realtime":
+        return job_type == "gap_recovery" and config.backfill_skip_kubernetes
+
+    realtime_start, _ = aligned_window_range(utc_now(), config.window_size, config.runner_lookback_minutes)
+    is_fresh_realtime = end > realtime_start
+    if is_fresh_realtime:
+        return False
+    return config.backfill_skip_kubernetes
+
+
 def run_gap_recovery(config: AgentConfig, realtime_start: datetime, realtime_end: datetime, runner_run_id: int | None = None) -> GapRecoveryResult:
     started_at = format_time(utc_now())
     scan_end = realtime_start
@@ -526,7 +579,8 @@ def run_gap_recovery(config: AgentConfig, realtime_start: datetime, realtime_end
             error="empty_scan_range",
         )
     try:
-        candidates = find_recoverable_windows(config, scan_start, scan_end)
+        oldest_first = config.gap_recovery_order != "newest"
+        candidates = find_recoverable_windows(config, scan_start, scan_end, oldest_first=oldest_first)
         selected = candidates[: max(0, config.gap_max_windows_per_run)]
         recovered = []
         for candidate in selected:
@@ -538,6 +592,7 @@ def run_gap_recovery(config: AgentConfig, realtime_start: datetime, realtime_end
                 service_ids=candidate.missing_service_ids,
                 runner_run_id=runner_run_id,
                 priority=50,
+                service_chunk_size=config.gap_service_chunk_size,
             )
             recovered.append(
                 {
@@ -576,14 +631,13 @@ class ScheduledRunner:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self._thread: threading.Thread | None = None
-        self._worker_thread: threading.Thread | None = None
+        self._worker_threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self._lock = threading.Lock()
-        self._running = False
         self.last_result: RunResult | None = None
         self.last_gap_recovery: GapRecoveryResult | None = None
         self.next_run_at: str | None = None
-        self.current_job: dict[str, Any] | None = None
+        self.current_jobs: dict[str, dict[str, Any]] = {}
 
     def start(self) -> None:
         self._stop.clear()
@@ -594,11 +648,18 @@ class ScheduledRunner:
         self._thread.start()
 
     def start_worker(self) -> None:
-        if self._worker_thread and self._worker_thread.is_alive():
+        live_workers = [thread for thread in self._worker_threads if thread.is_alive()]
+        if len(live_workers) >= self.config.worker_concurrency:
+            self._worker_threads = live_workers
             return
-        reset_interrupted_collection_jobs(self.config.database_url)
-        self._worker_thread = threading.Thread(target=self._worker_loop, name="sre-agent-worker", daemon=True)
-        self._worker_thread.start()
+        if not live_workers:
+            reset_interrupted_collection_jobs(self.config.database_url)
+        self._worker_threads = live_workers
+        for idx in range(len(self._worker_threads), self.config.worker_concurrency):
+            worker_name = f"sre-agent-worker-{idx + 1}"
+            thread = threading.Thread(target=self._worker_loop, name=worker_name, args=(worker_name,), daemon=True)
+            self._worker_threads.append(thread)
+            thread.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -665,16 +726,24 @@ from (
         ) or {}
         return {
             "enabled": self.config.runner_enabled,
-            "running": self._running,
-            "worker_running": bool(self._worker_thread and self._worker_thread.is_alive()),
+            "running": bool(self.current_jobs),
+            "worker_running": any(thread.is_alive() for thread in self._worker_threads),
+            "worker_concurrency": self.config.worker_concurrency,
+            "collection_timeout_seconds": self.config.collection_timeout_seconds,
+            "worker_count": sum(1 for thread in self._worker_threads if thread.is_alive()),
             "interval_seconds": self.config.runner_interval_seconds,
             "lookback_minutes": self.config.runner_lookback_minutes,
             "window_size": self.config.window_size,
             "gap_recovery_enabled": self.config.gap_recovery_enabled,
             "gap_lookback_hours": self.config.gap_lookback_hours,
             "gap_max_windows_per_run": self.config.gap_max_windows_per_run,
+            "gap_service_chunk_size": self.config.gap_service_chunk_size,
+            "gap_recovery_order": self.config.gap_recovery_order,
+            "skip_kubernetes": self.config.skip_kubernetes,
+            "backfill_skip_kubernetes": self.config.backfill_skip_kubernetes,
             "next_run_at": self.next_run_at,
-            "current_job": self.current_job,
+            "current_job": next(iter(self.current_jobs.values()), None),
+            "current_jobs": list(self.current_jobs.values()),
             "job_counts_24h": counts,
             "last_result": asdict(self.last_result) if self.last_result else None,
             "last_gap_recovery": asdict(self.last_gap_recovery) if self.last_gap_recovery else None,
@@ -717,46 +786,53 @@ from (
             self.next_run_at = format_time(next_run)
             self._stop.wait(self.config.runner_interval_seconds)
 
-    def _worker_loop(self) -> None:
+    def _worker_loop(self, worker_name: str) -> None:
         while not self._stop.is_set():
-            job = claim_next_collection_job(self.config.database_url)
+            job = claim_next_collection_job(self.config)
             if not job:
                 self._stop.wait(2)
                 continue
             with self._lock:
-                self._running = True
-                self.current_job = job
-            start = parse_time(job["window_start"])
-            end = parse_time(job["window_end"])
-            service_ids = job.get("service_ids")
-            result = run_collection(
-                self.config,
-                start,
-                end,
-                service_ids=service_ids,
-                dry_run=bool(job.get("dry_run")),
-            )
-            update_collection_job_result(self.config.database_url, int(job["id"]), result)
-            refresh_runner_run_counts(self.config.database_url, job.get("runner_run_id"))
-            if result.status == "succeeded" and not job.get("dry_run") and self.config.mark_anomalies_after_collection:
-                try:
-                    mark_anomalies(self.config.database_url, service_ids=service_ids, since=start, until=end)
-                except Exception as exc:  # noqa: BLE001 - keep collection success visible.
-                    psql_exec(
-                        self.config.database_url,
-                        """
+                tracked_job = dict(job)
+                tracked_job["worker_name"] = worker_name
+                self.current_jobs[worker_name] = tracked_job
+            try:
+                start = parse_time(job["window_start"])
+                end = parse_time(job["window_end"])
+                service_ids = job.get("service_ids")
+                skip_kubernetes = should_skip_kubernetes_for_job(self.config, str(job.get("job_type")), end)
+                with self._lock:
+                    if worker_name in self.current_jobs:
+                        self.current_jobs[worker_name]["skip_kubernetes"] = skip_kubernetes
+                result = run_collection(
+                    self.config,
+                    start,
+                    end,
+                    service_ids=service_ids,
+                    dry_run=bool(job.get("dry_run")),
+                    skip_kubernetes=skip_kubernetes,
+                )
+                update_collection_job_result(self.config.database_url, int(job["id"]), result)
+                refresh_runner_run_counts(self.config.database_url, job.get("runner_run_id"))
+                if result.status == "succeeded" and not job.get("dry_run") and self.config.mark_anomalies_after_collection:
+                    try:
+                        mark_anomalies(self.config.database_url, service_ids=service_ids, since=start, until=end)
+                    except Exception as exc:  # noqa: BLE001 - keep collection success visible.
+                        psql_exec(
+                            self.config.database_url,
+                            """
 update collection_jobs
 set error = coalesce(error || '; ', '') || {error}
 where id = {job_id};
 """.format(
-                            job_id=int(job["id"]),
-                            error=sql_literal(f"post_collection_anomaly_marking_failed: {exc}"),
-                        ),
-                    )
-                    refresh_runner_run_counts(self.config.database_url, job.get("runner_run_id"))
-            with self._lock:
-                self._running = False
-                self.current_job = None
+                                job_id=int(job["id"]),
+                                error=sql_literal(f"post_collection_anomaly_marking_failed: {exc}"),
+                            ),
+                        )
+                        refresh_runner_run_counts(self.config.database_url, job.get("runner_run_id"))
+            finally:
+                with self._lock:
+                    self.current_jobs.pop(worker_name, None)
 
 
 def result_to_dict(result: RunResult) -> dict[str, Any]:

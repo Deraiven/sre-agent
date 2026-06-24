@@ -146,8 +146,10 @@ create table collection_jobs (
 );
 ```
 
-Gap recovery 会优先选择已有部分数据但不完整的窗口，再补完全空窗口。服务级
-缺口会进入 `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
+Runner 内的 gap recovery 只负责最近窗口的小缺口自愈。大量历史缺口由
+`scripts/historical_gap_backfill.py` 独立扫描并调用 bulk collector，不进入
+runner 的 `collection_jobs` 队列，避免挤占实时采集 worker。服务级缺口会进入
+near-term `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
 
 ### `service_baselines`
 
@@ -184,6 +186,37 @@ Risk v2 优先使用周期时间槽 baseline，避免把正常高峰误判为危
 5. `service + metric global`
 
 `minute_slot` 对 15m 窗口通常是 `0/15/30/45`。
+
+### Dynamic Baseline Model Tables
+
+P0 模型框架保存训练计划、模型版本、质量报告和 feedback label。当前版本
+可以训练 `seasonal_quantile_v1` bucket，但默认只进入 `evaluated` 状态，
+不会自动激活到线上 risk。
+
+| Table | Purpose |
+| --- | --- |
+| `service_metric_training_runs` | 记录每次模型训练或 dry-run，包含训练窗口、服务范围、指标范围和质量摘要 |
+| `service_metric_models` | 保存 `service_id + metric_name` 级别的模型版本、状态、特征定义和质量摘要 |
+| `service_metric_model_buckets` | 保存未来 `seasonal_quantile_v1` 的时间槽 bucket、quantile、MAD 和 confidence |
+| `service_metric_model_evaluations` | 保存 backtest、shadow mode、误报漏报等模型验证结果 |
+| `risk_feedback_labels` | 保存 risk 误报、漏报、confirmed incident 等反馈标签，用于后续半监督校准 |
+
+第一阶段模型类型是 `seasonal_quantile_v1`，特征框架包括：
+
+- `weekday`
+- `hour`
+- `minute_slot`
+- `is_weekend`
+- `newrelic.request_count`
+- `newrelic.rpm`
+
+模型状态流转建议：
+
+```text
+dry_run -> planned -> training -> evaluated -> active
+                              -> rejected
+active -> retired
+```
 
 ### `anomaly_windows`
 
@@ -376,10 +409,12 @@ s3://sre-agent-data/
 
 ```mermaid
 flowchart TD
-    Scheduler["15m runner / gap recovery / daily backfill"] --> RunAudit["Write runner_runs"]
+    Scheduler["15m runner / near-term gap recovery"] --> RunAudit["Write runner_runs"]
     RunAudit --> Queue["Enqueue collection_jobs"]
     Queue --> Worker["Collector worker"]
+    HistoricalBackfill["Standalone historical gap backfill"] --> Bulk["Bulk backfill collector"]
     Worker --> Query["Query New Relic, Prometheus, Kubernetes, GitHub"]
+    Bulk --> Query
     Query --> Snapshot["Write optional raw snapshot to S3"]
     Query --> Aggregate["Aggregate metrics into windows"]
     Aggregate --> Postgres["Write service_metric_windows"]

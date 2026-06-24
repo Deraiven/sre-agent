@@ -87,10 +87,11 @@ base64("464254|APM|APPLICATION|<newrelic_app_id>")
 | 能力 | 实现 |
 | --- | --- |
 | 历史回填 | `scripts/backfill_15m_bulk.py` 回填 30 天 New Relic + Prometheus 15m 窗口 |
+| 历史缺口修复 | `scripts/historical_gap_backfill.py` 独立修复 runner gap window 之外的历史缺口 |
 | 实时采集 | `scripts/collect_windows.py` 采集 New Relic、Prometheus、Kubernetes inspect、GitHub change context |
 | HTTP 服务 | `python3 -m sre_agent.service` |
 | Schedule runner | 每 15 分钟采集最近 60 分钟完整窗口 |
-| Gap recovery | 每轮扫描最近 24 小时缺失/失败窗口，最多回填 8 个 15m 窗口 |
+| Gap recovery | runner 只修复最近窗口内的缺失/失败窗口，默认最新窗口优先，最多回填 8 个 15m 窗口 |
 | Baseline | `POST /baseline/recompute` 写入 `service_baselines` |
 | Anomaly | `POST /anomalies/mark` 或 runner 采集后自动写入 `anomaly_windows` |
 | Risk | `GET /services/{service_id}/risk` 和 `POST /risk/score` |
@@ -167,6 +168,21 @@ python3 scripts/backfill_15m_bulk.py \
 ```
 
 `backfill_15m_bulk.py` 会把 New Relic 查询切成 3 天一段，避免 New Relic `TIMESERIES` 366 buckets 限制；Prometheus 会按服务和指标做 30 天 `query_range`，避免逐窗口查询。
+
+日常运行时不要让 runner 承担大量历史缺口回填。推荐拆成两个进程：
+
+- SRE Agent service：每 15 分钟采集实时窗口，并只修复最近 `SRE_AGENT_GAP_LOOKBACK_HOURS` 范围内的小缺口。
+- Historical gap backfill：用 cron 或 Kubernetes CronJob 周期运行 `scripts/historical_gap_backfill.py`，扫描最近半个月但排除 runner gap window 的区间；没有缺口直接退出，有缺口再调用 bulk collector。
+
+示例命令：
+
+```bash
+python3 scripts/historical_gap_backfill.py \
+  --history-days 15 \
+  --exclude-recent-hours 24 \
+  --max-range-hours 24 \
+  --max-ranges 1
+```
 
 如果先跑单服务验证：
 
