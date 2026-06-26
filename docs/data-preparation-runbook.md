@@ -6,13 +6,13 @@
 
 | 项 | 状态 |
 | --- | --- |
-| 服务目录 | `config/service-catalog.yaml`，52 个服务 |
+| 服务目录 | `config/service-catalog.yaml`，51 个服务 |
 | New Relic account | `464254` StoreHub |
 | New Relic entity GUID | 已根据 app id 自动补齐 |
 | Prometheus 连接 | 已验证健康 |
 | Prometheus 资源指标 | 已验证 CPU、memory、throttling、network 指标存在 |
 | 训练窗口 | 30 天，15 分钟窗口 |
-| 预计样本量 | 52 * 2880 = 149,760 个窗口 |
+| 预计样本量 | 51 * 2880 = 146,880 个窗口 |
 
 ## 生成数据准备计划
 
@@ -115,7 +115,7 @@ python3 scripts/collect_windows.py \
 
 ## 近 30 天回填策略
 
-不要对 `5m`、`15m`、`1h`、`1d` 全部窗口都直接查询外部系统。第一阶段使用 `15m` 作为主训练粒度，覆盖近 30 天。52 个服务约产生 `52 * 2880 = 149,760` 条窗口，已经足够建立 SLO baseline、异常标签和风险模型。
+不要对 `5m`、`15m`、`1h`、`1d` 全部窗口都直接查询外部系统。第一阶段使用 `15m` 作为主训练粒度，覆盖近 30 天。51 个服务约产生 `51 * 2880 = 146,880` 条窗口，已经足够建立 SLO baseline、异常标签和风险模型。
 
 Risk baseline 必须按周期时间槽使用历史数据。当前主 baseline 使用
 `weekday + hour + 15m minute_slot`，例如“周一 10:15”会优先对比历史周一

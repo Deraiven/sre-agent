@@ -57,7 +57,7 @@ def service_env(args: argparse.Namespace) -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("DATABASE_URL", DEFAULT_DATABASE_URL)
     env.setdefault("SRE_AGENT_SKIP_GITHUB", "true")
-    env.setdefault("SRE_AGENT_SKIP_KUBERNETES_EVENTS", "true")
+    env.setdefault("SRE_AGENT_SKIP_KUBERNETES_EVENTS", "false")
     env["SRE_AGENT_BACKFILL_SKIP_KUBERNETES"] = "true" if args.skip_backfill_kubernetes else "false"
     env["SRE_AGENT_KUBECTL_TIMEOUT_SECONDS"] = str(args.kubectl_timeout_seconds)
     if args.skip_kubernetes:
