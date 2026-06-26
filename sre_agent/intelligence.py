@@ -49,6 +49,13 @@ BASELINE_SCOPE_WEIGHTS = {
     "hour": 0.45,
     "global": 0.25,
 }
+MODEL_BASELINE_SCOPE_WEIGHTS = {
+    "weekday_hour_slot": 1.00,
+    "hour_slot": 0.85,
+    "weekday_hour": 0.65,
+    "hour": 0.50,
+    "global": 0.30,
+}
 KUBERNETES_OK_STATUSES = ("collected", "events_only", "partial", "missing")
 
 
@@ -685,6 +692,230 @@ from (
     }
 
 
+def load_active_model_buckets(database_url: str, service_id: str) -> dict[str, dict[str, dict[str, Any]]]:
+    sql = f"""
+select coalesce(json_agg(row_to_json(b) order by b.metric_name, b.baseline_scope), '[]'::json)
+from (
+  select m.id as model_id,
+         m.metric_name,
+         m.model_version,
+         m.model_type,
+         m.training_window_start,
+         m.training_window_end,
+         m.created_at as model_created_at,
+         b.baseline_scope,
+         b.day_of_week,
+         b.hour_of_day,
+         b.minute_slot,
+         b.p50,
+         b.p75,
+         b.p90,
+         b.p95,
+         b.p99,
+         b.median,
+         b.mad,
+         b.sample_count,
+         b.coverage_pct,
+         b.confidence
+  from service_metric_models m
+  join service_metric_model_buckets b on b.model_id = m.id
+  where m.service_id = {sql_literal(service_id)}
+    and m.active
+) b;
+"""
+    rows = psql_json(database_url, sql) or []
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        metric_name = row["metric_name"]
+        key = f"{row['day_of_week']}|{row['hour_of_day']}|{row.get('minute_slot')}"
+        result.setdefault(metric_name, {})[key] = row
+    return result
+
+
+def model_bucket_candidates(
+    model_buckets: dict[str, dict[str, dict[str, Any]]],
+    metric_name: str,
+    window_start: datetime,
+) -> list[dict[str, Any]]:
+    metric_buckets = model_buckets.get(metric_name) or {}
+    candidates = [
+        (f"{window_start.weekday()}|{window_start.hour}|{window_start.minute}", "weekday_hour_slot"),
+        (f"None|{window_start.hour}|{window_start.minute}", "hour_slot"),
+        (f"{window_start.weekday()}|{window_start.hour}|None", "weekday_hour"),
+        (f"None|{window_start.hour}|None", "hour"),
+        ("None|None|None", "global"),
+    ]
+    result: list[dict[str, Any]] = []
+    for key, scope in candidates:
+        bucket = metric_buckets.get(key)
+        if bucket:
+            result.append(
+                {
+                    **bucket,
+                    "baseline_scope": scope,
+                    "baseline_weight": MODEL_BASELINE_SCOPE_WEIGHTS[scope],
+                }
+            )
+    return result
+
+
+def metric_model_residual_points(metric_name: str, value: float, bucket: dict[str, Any]) -> tuple[int, str | None]:
+    if metric_name in TRAFFIC_CONTEXT_METRICS:
+        return 0, "traffic_context"
+    median = bucket.get("median")
+    mad = bucket.get("mad")
+    p95 = bucket.get("p95")
+    p99 = bucket.get("p99")
+    robust_mad_score = None
+    if isinstance(median, (int, float)) and isinstance(mad, (int, float)) and mad > 0:
+        robust_mad_score = (value - median) / (mad * 1.4826)
+    p95_ratio = value / p95 if isinstance(p95, (int, float)) and p95 > 0 else None
+    p99_ratio = value / p99 if isinstance(p99, (int, float)) and p99 > 0 else None
+
+    if metric_name == "kubernetes.ready_ratio":
+        if value < 1.0:
+            return (38 if value < 0.8 else 22), "kubernetes_ready_ratio"
+        return 0, None
+
+    points = 0
+    deviation_type = None
+    if isinstance(p99, (int, float)) and value > p99 and value > 0:
+        points = 18 if robust_mad_score is None else 10
+        deviation_type = "model_p99_residual"
+    elif isinstance(p95, (int, float)) and value > p95 and value > 0:
+        points = 8 if robust_mad_score is None else 4
+        deviation_type = "model_p95_residual"
+
+    if robust_mad_score is not None:
+        if robust_mad_score >= 8:
+            points = max(points, 34)
+            deviation_type = "model_mad_critical"
+        elif robust_mad_score >= 5:
+            points = max(points, 24)
+            deviation_type = "model_mad_high"
+        elif robust_mad_score >= 3:
+            points = max(points, 14)
+            deviation_type = "model_mad_medium"
+
+    if metric_name.startswith("newrelic.error_rate") and value > 0 and points:
+        points += 8
+    elif "latency" in metric_name and points:
+        if robust_mad_score is not None and robust_mad_score < 3 and (p99_ratio or p95_ratio or 0) < 1.25:
+            points = min(points, 6)
+        else:
+            points += 3
+    elif metric_name.startswith("prometheus.") and points:
+        if robust_mad_score is not None and robust_mad_score < 3 and (p99_ratio or p95_ratio or 0) < 1.20:
+            points = min(points, 6)
+    elif metric_name.startswith("kubernetes.") and points:
+        points += 8
+
+    return min(points, 50), deviation_type
+
+
+def metric_model_residual_comparison(metric_name: str, value: float, bucket: dict[str, Any]) -> dict[str, Any]:
+    raw_points, deviation_type = metric_model_residual_points(metric_name, value, bucket)
+    weight = float(bucket.get("baseline_weight") or 1.0)
+    weighted_points = round(raw_points * weight)
+    median = bucket.get("median")
+    mad = bucket.get("mad")
+    residual = value - median if isinstance(median, (int, float)) else None
+    residual_ratio = (
+        value / median
+        if isinstance(median, (int, float)) and median > 0
+        else None
+    )
+    robust_mad_score = (
+        residual / (mad * 1.4826)
+        if isinstance(residual, (int, float)) and isinstance(mad, (int, float)) and mad > 0
+        else None
+    )
+    p95 = bucket.get("p95")
+    p99 = bucket.get("p99")
+    return {
+        "model_id": bucket.get("model_id"),
+        "model_version": bucket.get("model_version"),
+        "model_type": bucket.get("model_type"),
+        "baseline_scope": bucket.get("baseline_scope"),
+        "baseline_weight": weight,
+        "sample_count": bucket.get("sample_count"),
+        "coverage_pct": bucket.get("coverage_pct"),
+        "confidence": bucket.get("confidence"),
+        "p50": bucket.get("p50"),
+        "p95": p95,
+        "p99": p99,
+        "median": median,
+        "mad": mad,
+        "residual": residual,
+        "residual_ratio": residual_ratio,
+        "p95_deviation": value - p95 if isinstance(p95, (int, float)) else None,
+        "p99_deviation": value - p99 if isinstance(p99, (int, float)) else None,
+        "robust_mad_score": robust_mad_score,
+        "deviation_type": deviation_type,
+        "raw_points": raw_points,
+        "weighted_points": weighted_points,
+    }
+
+
+def evaluate_window_dynamic_model(row: dict[str, Any], model_buckets: dict[str, dict[str, dict[str, Any]]]) -> dict[str, Any]:
+    window_start = parse_time(row["window_start"])
+    metrics = extract_metrics(row)
+    evidence: list[dict[str, Any]] = []
+    evaluated_metric_count = 0
+    score = 0
+
+    for metric_name, value in metrics.items():
+        candidates = model_bucket_candidates(model_buckets, metric_name, window_start)
+        if not candidates:
+            continue
+        evaluated_metric_count += 1
+        comparisons = [metric_model_residual_comparison(metric_name, value, bucket) for bucket in candidates]
+        selected = max(comparisons, key=lambda item: item["weighted_points"])
+        points = selected["weighted_points"]
+        if points <= 0:
+            continue
+        evidence.append(
+            {
+                "source": "ml_dynamic_baseline",
+                "metric": metric_name,
+                "value": value,
+                "points": points,
+                "model_version": selected["model_version"],
+                "model_type": selected["model_type"],
+                "baseline_scope": selected["baseline_scope"],
+                "baseline_weight": selected["baseline_weight"],
+                "baseline_sample_count": selected["sample_count"],
+                "coverage_pct": selected["coverage_pct"],
+                "confidence": selected["confidence"],
+                "model_p50": selected["p50"],
+                "model_p95": selected["p95"],
+                "model_p99": selected["p99"],
+                "median": selected["median"],
+                "mad": selected["mad"],
+                "residual": selected["residual"],
+                "residual_ratio": selected["residual_ratio"],
+                "p95_deviation": selected["p95_deviation"],
+                "p99_deviation": selected["p99_deviation"],
+                "robust_mad_score": selected["robust_mad_score"],
+                "deviation_type": selected["deviation_type"],
+                "raw_points": selected["raw_points"],
+                "model_comparisons": comparisons,
+            }
+        )
+        score += points
+
+    top_points = [item["points"] for item in sorted(evidence, key=lambda item: item["points"], reverse=True)[:3]]
+    return {
+        "service_id": row["service_id"],
+        "window_start": row["window_start"],
+        "window_end": row["window_end"],
+        "window_size": row["window_size"],
+        "score": min(sum(top_points), 70),
+        "evaluated_metric_count": evaluated_metric_count,
+        "evidence": sorted(evidence, key=lambda item: item["points"], reverse=True)[:20],
+    }
+
+
 def score_service_risk(
     database_url: str,
     service_id: str,
@@ -697,9 +928,13 @@ def score_service_risk(
     until = until or utc_now()
     since = since or (until - timedelta(hours=lookback_hours))
     baselines = load_baseline_map(database_url, service_id, baseline_version)
+    model_buckets = load_active_model_buckets(database_url, service_id)
+    dynamic_model_status = load_dynamic_model_status(database_url, service_id)
     rows = load_metric_windows(database_url, service_id=service_id, since=since, until=until)
     evaluations = [evaluate_window(row, baselines) for row in rows]
     base_score, _ = risk_from_scores([item["score"] for item in evaluations])
+    model_evaluations = [evaluate_window_dynamic_model(row, model_buckets) for row in rows] if model_buckets else []
+    model_score, _ = risk_from_scores([item["score"] for item in model_evaluations])
     top_evidence: list[dict[str, Any]] = []
     for item in sorted(evaluations, key=lambda row: row["score"], reverse=True):
         for evidence in item["evidence"]:
@@ -713,6 +948,26 @@ def score_service_risk(
         load_recent_trace_summaries(database_url, service_id, since=since, until=until)
     )
     score = min(100, max(base_score, round(base_score * 0.75 + transaction_risk["score"] * 0.5)))
+    dynamic_model_evidence: list[dict[str, Any]] = []
+    for item in sorted(model_evaluations, key=lambda row: row["score"], reverse=True):
+        for evidence in item["evidence"]:
+            evidence = {**evidence, "window_start": item["window_start"]}
+            dynamic_model_evidence.append(evidence)
+            if len(dynamic_model_evidence) >= 10:
+                break
+        if len(dynamic_model_evidence) >= 10:
+            break
+    dynamic_baseline_risk = {
+        "score": model_score,
+        "status": "active" if model_buckets else "not_trained",
+        "active_model_count": dynamic_model_status.get("active_model_count") or 0,
+        "evaluated_window_count": len(model_evaluations),
+        "evaluated_metric_count": sum(item["evaluated_metric_count"] for item in model_evaluations),
+        "evidence": dynamic_model_evidence,
+    }
+    if model_score:
+        score = min(100, max(score, model_score, round(base_score * 0.6 + model_score * 0.7)))
+        top_evidence = (dynamic_model_evidence + top_evidence)[:10]
     if transaction_risk["evidence"]:
         score = min(100, max(score, min(100, transaction_risk["score"])))
         top_evidence = (transaction_risk["evidence"] + top_evidence)[:10]
@@ -730,7 +985,8 @@ def score_service_risk(
         "latest_window": evaluations[-1] if evaluations else None,
         "base_window_risk_score": base_score,
         "transaction_baseline_risk": transaction_risk,
-        "dynamic_baseline_model": load_dynamic_model_status(database_url, service_id),
+        "dynamic_baseline_model": dynamic_model_status,
+        "dynamic_baseline_risk": dynamic_baseline_risk,
         "top_evidence": top_evidence,
     }
 

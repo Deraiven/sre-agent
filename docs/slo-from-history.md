@@ -325,6 +325,58 @@ Agent 应为每个服务生成可审阅的建议，而不是直接写死 catalog
 }
 ```
 
+当前第一版由 `scripts/generate_slo_recommendations.py` 生成，并写入
+`slo_recommendations` 表。服务运行后也可以通过 API 生成和查询：
+
+```bash
+python3 scripts/generate_slo_recommendations.py --days 30 --replace
+
+curl -X POST http://127.0.0.1:8080/slo/recommendations/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"days":30,"replace":true}'
+
+curl 'http://127.0.0.1:8080/slo/recommendations?recommendation_version=slo-rec-v1'
+```
+
+生成规则：
+
+| 字段 | 计算方式 |
+| --- | --- |
+| `recommendation_version` | 默认 `slo-rec-v1`，同版本未审核记录可用 `--replace` 重建 |
+| `recommendation_window` | 默认 `30d`，基于 `service_metric_windows` 的 `15m` 聚合窗口 |
+| `availability_target` | 用请求量加权 error rate 反推历史 availability，再推荐 99.9 / 99.5 / 99.0 |
+| `error_rate_percent` | `100 - availability_target`，最低保留 0.1% |
+| `latency_p95_ms` | 历史窗口级 p95 latency 的 p95 值增加 10% headroom 后取整 |
+| `latency_p99_ms` | 历史窗口级 p99 latency 的 p95 值增加 15% headroom 后取整 |
+| `target_type` | `slo_candidate` / `provisional_slo_candidate` / `reliability_roadmap` / `low_traffic_candidate` / `needs_data` / `edge_service` |
+| `confidence` | 由整体覆盖率、New Relic 覆盖率、latency 样本覆盖率和 review flags 决定 |
+| `status` | 初始统一为 `pending_review`，审核后再同步到 catalog |
+
+以下情况不会直接视为可用正式 SLO，会进入 owner review：
+
+| 场景 | 原因 |
+| --- | --- |
+| 总请求量低于 1000 | 低流量服务历史 100% 可用不代表可靠性目标可设到 99.9% |
+| New Relic 覆盖率低于 95% | availability 和 latency 证据不足 |
+| latency 样本缺失 | 无法推荐 p95/p99 latency SLO |
+| job / consumer 服务 | 不直接生成 HTTP latency SLO，需要补充业务成功率、freshness、lag 等领域 SLI |
+| SSE / streaming 服务 | 不直接生成 HTTP latency SLO，需要补充连接成功率、断连率、消息投递延迟或事件投递成功率 |
+| 历史 availability 低于 99.5% | 先进入 reliability roadmap，而不是把坏体验合法化 |
+
+当前 `slo-rec-v1` 有一组人工审查后的策略例外：
+
+| 服务 | 处理方式 | 原因 |
+| --- | --- | --- |
+| `auth-api` | 可作为 `slo_candidate` | 低可用性主要来自稳定/周期性错误模式，第一版用计算值作为 SLO 候选 |
+| `backoffice-v2-bff` | 可作为 `slo_candidate` | 低可用性主要来自稳定/周期性错误模式，第一版用计算值作为 SLO 候选 |
+| `beep-v1-web` | 可作为 `slo_candidate` | 低可用性主要来自稳定/周期性错误模式，第一版用计算值作为 SLO 候选 |
+| `otp-api` | 可作为 `slo_candidate` | 低可用性可能包含业务预期失败，第一版先用计算值作为 SLO 候选，后续再拆系统错误和业务失败 |
+| `e-invoice-adapter-svc` | 保留 review | 错误率集中在局部时间点，疑似外部依赖或尖峰异常，不自动沉淀为正式 SLO |
+| `backoffice-migrate-jobs` | 标记为 `edge_service` | 从主业务剥离出来的 job，不按 HTTP request/latency 生成 SLO |
+| `core-event-consumer-zendesk` | 标记为 `edge_service` | 从主业务剥离出来的 consumer/job，不按 HTTP request/latency 生成 SLO |
+| `3p-webhook-adapter-infra-svc` | 标记为 `provisional_slo_candidate` | 低流量服务先使用计算值作为暂定 SLO，等 webhook 成功率/失败率等自定义指标接入后重算 |
+| `core-event-consumer-payment` | 标记为 `provisional_slo_candidate` | consumer 先使用计算值作为暂定 SLO，等消费成功率、lag、DLQ、freshness 等自定义指标接入后重算 |
+
 ## 十一、Error Budget
 
 SLO 要能转成 error budget，Agent 才能做风险预测和发布建议。
