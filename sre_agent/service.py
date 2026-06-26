@@ -31,6 +31,7 @@ from .ml_baseline import (
 )
 from .newrelic_trace import build_transaction_baselines
 from .runner import ScheduledRunner, parse_time, result_to_dict
+from .slo_recommendations import generate_slo_recommendations, list_slo_recommendations
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,6 +204,20 @@ from (
                     {"training_runs": list_training_runs(self.runner.config.database_url, int((query.get("limit") or ["50"])[0]))},
                 )
                 return
+            if path == "/slo/recommendations":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "recommendations": list_slo_recommendations(
+                            self.runner.config.database_url,
+                            service_id=(query.get("service_id") or [None])[0],
+                            recommendation_version=(query.get("recommendation_version") or [None])[0],
+                            status=(query.get("status") or [None])[0],
+                            limit=int((query.get("limit") or ["100"])[0]),
+                        )
+                    },
+                )
+                return
             if path.startswith("/services/") and path.endswith("/risk"):
                 parts = [part for part in path.split("/") if part]
                 if len(parts) != 3:
@@ -292,6 +307,23 @@ from (
                 )
                 status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.INTERNAL_SERVER_ERROR
                 self._send_json(status, result)
+                return
+            if path == "/slo/recommendations/generate":
+                service_ids = payload.get("service_ids")
+                if service_ids is not None and not isinstance(service_ids, list):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "service_ids must be a list"})
+                    return
+                result = generate_slo_recommendations(
+                    self.runner.config.database_url,
+                    days=int(payload.get("days", 30)),
+                    window_size=payload.get("window_size", "15m"),
+                    recommendation_version=payload.get("recommendation_version", "slo-rec-v1"),
+                    baseline_version=payload.get("baseline_version", "baseline-v1"),
+                    service_ids=service_ids,
+                    replace=bool(payload.get("replace", False)),
+                    dry_run=bool(payload.get("dry_run", False)),
+                )
+                self._send_json(HTTPStatus.OK, result)
                 return
             if path == "/anomalies/mark":
                 service_ids = payload.get("service_ids")
