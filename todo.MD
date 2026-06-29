@@ -14,7 +14,7 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Gap recovery | Working | Runner is bounded to near-term gaps; historical gaps are handled by a standalone backfill worker |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
-| SLO recommendations | Generated | `slo-rec-v1` wrote 51 pending-review recommendations from the last 30d of 15m windows |
+| SLO recommendations | Reviewed | `slo-rec-v1` wrote 51 recommendations from the last 30d of 15m windows; 46 are approved, 2 provisional, 2 domain-specific, and 1 reliability-roadmap item |
 | Dynamic service baselines | Working | Rule-based seasonal baselines exist; reviewed ML seasonal models are active for eligible services |
 | Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
 | Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
@@ -27,7 +27,7 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
-| P0 | Generate SLO recommendations | generated, owner review pending | 51 services have initial availability/error-rate/p95/p99 candidates in `slo_recommendations` |
+| P0 | Generate SLO recommendations | reviewed | 51 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
 | P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | framework added | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
 | P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
