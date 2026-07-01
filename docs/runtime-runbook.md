@@ -283,6 +283,8 @@ curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?lookback_hours=6'
 curl 'http://127.0.0.1:8080/services/backoffice-v2-bff/risk?since=2026-06-15T02:00:00Z&until=2026-06-15T04:00:00Z'
 
 curl 'http://127.0.0.1:8080/models/quality?days=30'
+curl 'http://127.0.0.1:8080/models/freshness?model_version=seasonal-quantile-v2-20260626'
+curl 'http://127.0.0.1:8080/models/drift?lookback_hours=24'
 
 curl -X POST http://127.0.0.1:8080/models/train \
   -H 'Content-Type: application/json' \
@@ -336,6 +338,8 @@ versions.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /models/quality` | Check coverage/readiness for unsupervised seasonal baseline training |
+| `GET /models/freshness` | Compare active model training windows with latest metric windows and flag stale models |
+| `GET /models/drift` | Compare recent windows with active seasonal buckets and report p95/p99 breach rates plus robust MAD drift |
 | `POST /models/train` | Dry-run readiness or persist evaluated `seasonal_quantile_v1` models |
 | `GET /models/training_runs` | List training and dry-run records |
 | `GET /models` | List persisted model versions and activation state |
@@ -349,6 +353,23 @@ models, buckets, and evaluation rows when `dry_run=false`. Keep
 deviation, and robust MAD score, then exposes the result as
 `dynamic_baseline_risk` and merges ML evidence into `top_evidence`. If no active
 model exists for a service, risk v2 continues using the rule baseline fallback.
+
+Freshness statuses:
+
+- `fresh`: active model training window is within the warning threshold of the
+  latest metric window.
+- `stale_warning`: model lags latest data by at least 24 hours.
+- `stale_critical`: model lags latest data by at least 72 hours.
+- `no_active_model`: service has no active model.
+- `no_recent_data`: service has an active model but no metric windows.
+
+Drift statuses:
+
+- `stable`: recent windows are still represented by the active seasonal buckets.
+- `drift_warning`: p95 breach rate is at least 20% or MAD p95 is at least 4.
+- `drift_high`: p99 breach rate is at least 10% or MAD p95 is at least 6.
+- `insufficient_samples`: not enough recent samples for a reliable drift read.
+- `no_active_model`: service has no active model.
 
 ## Incident Inspect V2
 

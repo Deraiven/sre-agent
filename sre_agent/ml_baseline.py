@@ -12,7 +12,10 @@ from .intelligence import (
     WINDOW_SECONDS,
     extract_metrics,
     format_time,
+    load_active_model_buckets,
     load_metric_windows,
+    metric_model_residual_comparison,
+    model_bucket_candidates,
     parse_time,
     percentile,
     utc_now,
@@ -27,6 +30,12 @@ FEATURE_SPEC = {
     "baseline_scopes": ["weekday_hour_slot", "hour_slot", "weekday_hour", "hour", "global"],
     "scoring": ["residual", "residual_ratio", "robust_mad_score"],
 }
+
+FRESHNESS_WARNING_HOURS = 24
+FRESHNESS_CRITICAL_HOURS = 72
+DRIFT_WARNING_P95_BREACH_RATE = 0.20
+DRIFT_HIGH_P99_BREACH_RATE = 0.10
+DRIFT_CRITICAL_MAD_P95 = 6.0
 
 
 def _sql_text_array(values: list[str] | None) -> str:
@@ -176,6 +185,279 @@ from (
         },
         "feature_spec": FEATURE_SPEC,
         "services": services,
+    }
+
+
+def _freshness_status(
+    lag_hours: float | None,
+    has_active_model: bool,
+    has_recent_data: bool,
+    warning_hours: int,
+    critical_hours: int,
+) -> str:
+    if not has_active_model:
+        return "no_active_model"
+    if not has_recent_data:
+        return "no_recent_data"
+    if lag_hours is None:
+        return "unknown"
+    if lag_hours >= critical_hours:
+        return "stale_critical"
+    if lag_hours >= warning_hours:
+        return "stale_warning"
+    return "fresh"
+
+
+def model_freshness_report(
+    database_url: str,
+    service_ids: list[str] | None = None,
+    model_version: str | None = None,
+    window_size: str = "15m",
+    warning_hours: int = FRESHNESS_WARNING_HOURS,
+    critical_hours: int = FRESHNESS_CRITICAL_HOURS,
+) -> dict[str, Any]:
+    service_filter = _service_filter(service_ids)
+    model_version_filter = f"and model_version = {sql_literal(model_version)}" if model_version else ""
+    sql = f"""
+with service_scope as (
+  select s.service_id
+  from services s
+  where true {service_filter}
+),
+latest_windows as (
+  select service_id, max(window_end) as latest_metric_window
+  from service_metric_windows
+  where window_size = {sql_literal(window_size)}
+    and service_id in (select service_id from service_scope)
+  group by service_id
+),
+active_models as (
+  select service_id,
+         metric_name,
+         model_version,
+         model_type,
+         training_window_end,
+         activated_at,
+         created_at
+  from service_metric_models
+  where active
+    {model_version_filter}
+    and service_id in (select service_id from service_scope)
+)
+select coalesce(json_agg(row_to_json(q) order by q.service_id, q.metric_name), '[]'::json)
+from (
+  select
+    s.service_id,
+    m.metric_name,
+    m.model_version,
+    m.model_type,
+    m.training_window_end,
+    m.activated_at,
+    m.created_at,
+    lw.latest_metric_window,
+    case
+      when m.training_window_end is null or lw.latest_metric_window is null then null
+      else greatest(0, extract(epoch from (lw.latest_metric_window - m.training_window_end)) / 3600.0)
+    end as model_lag_hours
+  from service_scope s
+  left join active_models m on m.service_id = s.service_id
+  left join latest_windows lw on lw.service_id = s.service_id
+) q;
+"""
+    rows = psql_json(database_url, sql) or []
+    services: dict[str, dict[str, Any]] = {}
+    metric_reports: list[dict[str, Any]] = []
+    for row in rows:
+        service_id = row["service_id"]
+        has_active_model = bool(row.get("metric_name"))
+        has_recent_data = bool(row.get("latest_metric_window"))
+        lag_hours = float(row["model_lag_hours"]) if row.get("model_lag_hours") is not None else None
+        status = _freshness_status(lag_hours, has_active_model, has_recent_data, warning_hours, critical_hours)
+        report = {
+            **row,
+            "model_lag_hours": lag_hours,
+            "status": status,
+        }
+        metric_reports.append(report)
+        service = services.setdefault(
+            service_id,
+            {
+                "service_id": service_id,
+                "status": status,
+                "active_model_count": 0,
+                "max_model_lag_hours": lag_hours,
+                "latest_metric_window": row.get("latest_metric_window"),
+                "metrics": [],
+            },
+        )
+        if has_active_model:
+            service["active_model_count"] += 1
+        if lag_hours is not None:
+            previous = service.get("max_model_lag_hours")
+            service["max_model_lag_hours"] = lag_hours if previous is None else max(previous, lag_hours)
+        statuses = [service["status"], status]
+        if "stale_critical" in statuses:
+            service["status"] = "stale_critical"
+        elif "stale_warning" in statuses and service["status"] not in {"stale_critical"}:
+            service["status"] = "stale_warning"
+        elif "fresh" in statuses and service["status"] in {"unknown", "no_active_model"}:
+            service["status"] = "fresh"
+        service["metrics"].append(report)
+
+    status_counts: dict[str, int] = {}
+    for service in services.values():
+        status_counts[service["status"]] = status_counts.get(service["status"], 0) + 1
+    return {
+        "model_version": model_version,
+        "window_size": window_size,
+        "warning_hours": warning_hours,
+        "critical_hours": critical_hours,
+        "service_count": len(services),
+        "status_counts": status_counts,
+        "services": sorted(services.values(), key=lambda item: item["service_id"]),
+        "metrics": metric_reports,
+    }
+
+
+def _drift_status(
+    sample_count: int,
+    p95_breach_rate: float,
+    p99_breach_rate: float,
+    mad_score_p95: float | None,
+    min_samples: int,
+) -> str:
+    if sample_count < min_samples:
+        return "insufficient_samples"
+    if (mad_score_p95 is not None and mad_score_p95 >= DRIFT_CRITICAL_MAD_P95) or p99_breach_rate >= DRIFT_HIGH_P99_BREACH_RATE:
+        return "drift_high"
+    if p95_breach_rate >= DRIFT_WARNING_P95_BREACH_RATE or (mad_score_p95 is not None and mad_score_p95 >= 4.0):
+        return "drift_warning"
+    return "stable"
+
+
+def _model_metric_drift(metric_name: str, values: list[dict[str, Any]], min_samples: int) -> dict[str, Any]:
+    sample_count = len(values)
+    p95_breaches = [item for item in values if isinstance(item.get("p95_deviation"), (int, float)) and item["p95_deviation"] > 0]
+    p99_breaches = [item for item in values if isinstance(item.get("p99_deviation"), (int, float)) and item["p99_deviation"] > 0]
+    mad_scores = [
+        item["robust_mad_score"]
+        for item in values
+        if isinstance(item.get("robust_mad_score"), (int, float)) and item["robust_mad_score"] > 0
+    ]
+    residuals = [item["residual"] for item in values if isinstance(item.get("residual"), (int, float))]
+    mad_score_p50 = percentile(mad_scores, 0.50) if mad_scores else None
+    mad_score_p95 = percentile(mad_scores, 0.95) if mad_scores else None
+    p95_breach_rate = len(p95_breaches) / sample_count if sample_count else 0
+    p99_breach_rate = len(p99_breaches) / sample_count if sample_count else 0
+    return {
+        "metric_name": metric_name,
+        "sample_count": sample_count,
+        "p95_breach_count": len(p95_breaches),
+        "p99_breach_count": len(p99_breaches),
+        "p95_breach_rate": p95_breach_rate,
+        "p99_breach_rate": p99_breach_rate,
+        "mad_score_p50": mad_score_p50,
+        "mad_score_p95": mad_score_p95,
+        "residual_p50": percentile(residuals, 0.50) if residuals else None,
+        "residual_p95": percentile(residuals, 0.95) if residuals else None,
+        "status": _drift_status(sample_count, p95_breach_rate, p99_breach_rate, mad_score_p95, min_samples),
+        "top_examples": sorted(
+            values,
+            key=lambda item: item.get("robust_mad_score") if isinstance(item.get("robust_mad_score"), (int, float)) else -1,
+            reverse=True,
+        )[:3],
+    }
+
+
+def model_drift_report(
+    database_url: str,
+    service_ids: list[str] | None = None,
+    lookback_hours: int = 24,
+    window_size: str = "15m",
+    min_samples: int = 12,
+) -> dict[str, Any]:
+    until = utc_now()
+    since = until - timedelta(hours=max(1, min(lookback_hours, 24 * 14)))
+    selected_services = service_ids
+    if not selected_services:
+        sql = """
+select coalesce(json_agg(service_id order by service_id), '[]'::json)
+from (
+  select distinct service_id
+  from service_metric_models
+  where active
+) s;
+"""
+        selected_services = psql_json(database_url, sql) or []
+
+    service_reports: list[dict[str, Any]] = []
+    status_counts: dict[str, int] = {}
+    for service_id in selected_services:
+        model_buckets = load_active_model_buckets(database_url, service_id)
+        rows = load_metric_windows(database_url, service_id=service_id, since=since, until=until, window_size=window_size)
+        by_metric: dict[str, list[dict[str, Any]]] = {}
+        evaluated_points = 0
+        for row in rows:
+            window_start = parse_time(row["window_start"])
+            for metric_name, value in extract_metrics(row).items():
+                candidates = model_bucket_candidates(model_buckets, metric_name, window_start)
+                if not candidates:
+                    continue
+                comparisons = [metric_model_residual_comparison(metric_name, value, bucket) for bucket in candidates]
+                selected = max(comparisons, key=lambda item: item["weighted_points"])
+                by_metric.setdefault(metric_name, []).append(
+                    {
+                        "window_start": row["window_start"],
+                        "window_end": row["window_end"],
+                        "value": value,
+                        "baseline_scope": selected["baseline_scope"],
+                        "model_version": selected["model_version"],
+                        "p95_deviation": selected["p95_deviation"],
+                        "p99_deviation": selected["p99_deviation"],
+                        "residual": selected["residual"],
+                        "residual_ratio": selected["residual_ratio"],
+                        "robust_mad_score": selected["robust_mad_score"],
+                    }
+                )
+                evaluated_points += 1
+        metrics = [_model_metric_drift(metric_name, values, min_samples) for metric_name, values in by_metric.items()]
+        service_status = "no_active_model" if not model_buckets else "insufficient_samples"
+        if metrics:
+            metric_statuses = {metric["status"] for metric in metrics}
+            if "drift_high" in metric_statuses:
+                service_status = "drift_high"
+            elif "drift_warning" in metric_statuses:
+                service_status = "drift_warning"
+            elif metric_statuses == {"stable"}:
+                service_status = "stable"
+            elif "stable" in metric_statuses:
+                service_status = "partial"
+        status_counts[service_status] = status_counts.get(service_status, 0) + 1
+        service_reports.append(
+            {
+                "service_id": service_id,
+                "status": service_status,
+                "lookback_hours": lookback_hours,
+                "window_count": len(rows),
+                "evaluated_points": evaluated_points,
+                "active_metric_count": len(model_buckets),
+                "metrics": sorted(metrics, key=lambda item: (item["status"], item["metric_name"])),
+            }
+        )
+
+    return {
+        "since": format_time(since),
+        "until": format_time(until),
+        "lookback_hours": lookback_hours,
+        "window_size": window_size,
+        "min_samples": min_samples,
+        "policy": {
+            "drift_warning": f"p95 breach rate >= {DRIFT_WARNING_P95_BREACH_RATE:.0%} or MAD p95 >= 4",
+            "drift_high": f"p99 breach rate >= {DRIFT_HIGH_P99_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_CRITICAL_MAD_P95}",
+        },
+        "service_count": len(service_reports),
+        "status_counts": status_counts,
+        "services": sorted(service_reports, key=lambda item: item["service_id"]),
     }
 
 

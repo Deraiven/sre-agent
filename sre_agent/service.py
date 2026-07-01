@@ -27,6 +27,8 @@ from .ml_baseline import (
     create_training_run,
     list_models,
     list_training_runs,
+    model_drift_report,
+    model_freshness_report,
     model_quality_report,
 )
 from .newrelic_trace import build_transaction_baselines
@@ -181,6 +183,33 @@ from (
                         days=int((query.get("days") or ["30"])[0]),
                         window_size=(query.get("window_size") or ["15m"])[0],
                         model_version=(query.get("model_version") or ["seasonal-quantile-v1"])[0],
+                    ),
+                )
+                return
+            if path == "/models/freshness":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    model_freshness_report(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        model_version=(query.get("model_version") or [None])[0],
+                        window_size=(query.get("window_size") or ["15m"])[0],
+                        warning_hours=int((query.get("warning_hours") or ["24"])[0]),
+                        critical_hours=int((query.get("critical_hours") or ["72"])[0]),
+                    ),
+                )
+                return
+            if path == "/models/drift":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    model_drift_report(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        lookback_hours=int((query.get("lookback_hours") or ["24"])[0]),
+                        window_size=(query.get("window_size") or ["15m"])[0],
+                        min_samples=int((query.get("min_samples") or ["12"])[0]),
                     ),
                 )
                 return
