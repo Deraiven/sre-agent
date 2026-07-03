@@ -177,6 +177,14 @@ curl -X POST http://127.0.0.1:8080/models/train \
   -H 'Content-Type: application/json' \
   -d '{"dry_run":true,"days":30,"model_version":"seasonal-quantile-v1"}'
 
+curl 'http://127.0.0.1:8080/models/training_data_quality?days=30'
+
+curl -X POST http://127.0.0.1:8080/models/training_scheduler/run \
+  -H 'Content-Type: application/json' \
+  -d '{"model_version":"seasonal-quantile-auto-validation","trigger_source":"manual_validation"}'
+
+curl 'http://127.0.0.1:8080/models/training_scheduler/runs?limit=10'
+
 curl 'http://127.0.0.1:8080/models/activation/evaluate?model_version=seasonal-quantile-v4-20260703'
 
 curl -X POST http://127.0.0.1:8080/models/activate \
@@ -246,6 +254,12 @@ The first intelligence layer is deliberately rule-based:
   fallback:
   `weekday + hour + minute_slot`, `hour + minute_slot`, `weekday + hour`,
   `hour`, then `global`.
+- `models/training_data_quality`, `models/training_scheduler/run`, and
+  `models/training_scheduler/runs` provide the service-owned automatic training
+  loop. The scheduler is disabled by default; when enabled it runs daily,
+  checks coverage/source freshness/data-quality gates, trains a candidate
+  model, runs activation quality/freshness/drift gates, and writes every
+  activated or blocked decision to `model_training_scheduler_runs`.
 
 Current local P0 snapshot:
 
@@ -253,6 +267,9 @@ Current local P0 snapshot:
   service/metric models.
 - Model activation and rollback are API-driven and audited in
   `model_activation_events`.
+- Automatic retraining is implemented as a service scheduler with data-quality
+  precheck, activation gate, and scheduler audit rows. Keep it disabled locally
+  unless intentionally validating a full train-and-activate run.
 - Risk feedback currently has 7 reviewed labels in this workspace database: 5
   confirmed incidents, 2 false positives, and 0 false negatives.
 - Calibration-rule generation is implemented, but no trusted

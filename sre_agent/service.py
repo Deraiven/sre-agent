@@ -38,6 +38,7 @@ from .ml_baseline import (
     add_risk_feedback_label,
     activate_model_version,
     create_training_run,
+    list_model_training_scheduler_runs,
     model_activation_events,
     model_activation_evaluation,
     list_models,
@@ -46,6 +47,7 @@ from .ml_baseline import (
     model_freshness_report,
     model_quality_report,
     rollback_model_version,
+    training_data_quality_gate,
 )
 from .newrelic_trace import build_transaction_baselines
 from .runner import ScheduledRunner, parse_time, result_to_dict
@@ -266,6 +268,33 @@ from (
                             self.runner.config.database_url,
                             model_version=(query.get("model_version") or [None])[0],
                             limit=int((query.get("limit") or ["50"])[0]),
+                        )
+                    },
+                )
+                return
+            if path == "/models/training_data_quality":
+                self._send_json(
+                    HTTPStatus.OK,
+                    training_data_quality_gate(
+                        self.runner.config.database_url,
+                        days=int((query.get("days") or [str(self.runner.config.model_training_days)])[0]),
+                        window_size=(query.get("window_size") or [self.runner.config.window_size])[0],
+                        min_coverage_pct=float(
+                            (query.get("min_coverage_pct") or [str(self.runner.config.model_training_min_coverage_pct)])[0]
+                        ),
+                        max_latest_lag_minutes=int(
+                            (query.get("max_latest_lag_minutes") or [str(self.runner.config.runner_watchdog_data_lag_minutes)])[0]
+                        ),
+                    ),
+                )
+                return
+            if path == "/models/training_scheduler/runs":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "runs": list_model_training_scheduler_runs(
+                            self.runner.config.database_url,
+                            limit=int((query.get("limit") or ["20"])[0]),
                         )
                     },
                 )
@@ -516,6 +545,18 @@ from (
                 )
                 self._send_json(HTTPStatus.OK, result)
                 return
+            if path == "/models/training_scheduler/run":
+                result = self.runner.run_model_training_once(
+                    model_version=payload.get("model_version"),
+                    trigger_source=payload.get("trigger_source", "manual_api"),
+                )
+                status = HTTPStatus.OK
+                if result.get("status") in {"blocked_precheck", "blocked_activation", "blocked_concurrent_run"}:
+                    status = HTTPStatus.CONFLICT
+                elif result.get("status") == "error":
+                    status = HTTPStatus.INTERNAL_SERVER_ERROR
+                self._send_json(status, result)
+                return
             if path == "/risk/feedback":
                 self._send_json(HTTPStatus.OK, {"feedback": add_risk_feedback_label(self.runner.config.database_url, payload)})
                 return
@@ -643,7 +684,6 @@ def main() -> None:
     inspector = IncidentInspectionRunner(config)
     AgentRequestHandler.runner = runner
     AgentRequestHandler.inspector = inspector
-    runner.start_worker()
     inspector.start()
     if config.runner_enabled:
         runner.start()

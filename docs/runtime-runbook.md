@@ -121,6 +121,12 @@ Default settings:
 | `SRE_AGENT_RUNNER_WATCHDOG_SCHEDULE_GRACE_SECONDS` | `300` | Allowed delay after `next_run_at` before recovery |
 | `SRE_AGENT_RUNNER_WATCHDOG_DATA_LAG_MINUTES` | `60` | Latest metric window lag threshold before recovery |
 | `SRE_AGENT_RUNNER_WATCHDOG_STALE_JOB_SECONDS` | `420` | Requeue running jobs older than this threshold |
+| `SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED` | `false` | Enable service-owned automatic dynamic-baseline training |
+| `SRE_AGENT_MODEL_TRAINING_DAILY_AT` | `04:00` | Local daily training time |
+| `SRE_AGENT_MODEL_TRAINING_TIMEZONE` | `Asia/Shanghai` | Timezone used for the daily training trigger |
+| `SRE_AGENT_MODEL_TRAINING_DAYS` | `30` | Historical 15m window lookback for training |
+| `SRE_AGENT_MODEL_TRAINING_MIN_COVERAGE_PCT` | `95` | Minimum coverage for precheck and training eligibility |
+| `SRE_AGENT_MODEL_TRAINING_ACTIVATION_POLICY` | `{}` | Optional JSON override for activation gates |
 | `SRE_AGENT_HISTORICAL_BACKFILL_DAYS` | `15` | Historical gap scan window for the standalone backfill worker |
 | `SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS` | `24` | Recent window reserved for the service runner |
 | `SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS` | `24` | Maximum bulk collector range per historical backfill call |
@@ -352,6 +358,9 @@ versions.
 | `GET /models/drift` | Compare recent windows with active seasonal buckets and report p95/p99 breach rates plus robust MAD drift |
 | `POST /models/train` | Dry-run readiness or persist evaluated `seasonal_quantile_v1` models |
 | `GET /models/training_runs` | List training and dry-run records |
+| `GET /models/training_data_quality` | Run the automatic-training precheck without training a model |
+| `GET /models/training_scheduler/runs` | List automatic training scheduler audit runs |
+| `POST /models/training_scheduler/run` | Manually execute the service-owned scheduler flow once |
 | `GET /models` | List persisted model versions and activation state |
 | `GET /models/activation/evaluate` | Evaluate a model version against activation gates without changing active state |
 | `POST /models/activate` | Activate a model version only when policy gates pass, unless `force=true` |
@@ -372,6 +381,31 @@ models, buckets, and evaluation rows when `dry_run=false`. Keep
 deviation, and robust MAD score, then exposes the result as
 `dynamic_baseline_risk` and merges ML evidence into `top_evidence`. If no active
 model exists for a service, risk v2 continues using the rule baseline fallback.
+
+Automatic training scheduler:
+
+- Disabled by default with `SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED=false`.
+- When enabled, the service runs the scheduler once per day at
+  `SRE_AGENT_MODEL_TRAINING_DAILY_AT` in
+  `SRE_AGENT_MODEL_TRAINING_TIMEZONE`.
+- Each run writes `model_training_scheduler_runs`.
+- The scheduler first calls the training data quality gate. It blocks before
+  training when coverage, source success, latest data lag, data-quality errors,
+  or per-service eligibility fail.
+- If precheck passes, it trains a new candidate model version without direct
+  activation, evaluates the normal activation gates, then activates or writes a
+  blocked activation event.
+- Manual validation can use:
+
+  ```bash
+  curl 'http://127.0.0.1:8080/models/training_data_quality?days=30'
+
+  curl -X POST http://127.0.0.1:8080/models/training_scheduler/run \
+    -H 'Content-Type: application/json' \
+    -d '{"model_version":"seasonal-quantile-auto-test","trigger_source":"manual_validation"}'
+
+  curl 'http://127.0.0.1:8080/models/training_scheduler/runs?limit=10'
+  ```
 
 Activation / rollback policy:
 

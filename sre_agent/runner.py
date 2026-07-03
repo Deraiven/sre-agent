@@ -12,10 +12,19 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .config import AgentConfig
 from .db import psql, psql_exec, psql_json, sql_literal
 from .intelligence import mark_anomalies
+from .ml_baseline import (
+    activate_model_version,
+    create_model_training_scheduler_run,
+    create_training_run,
+    finish_model_training_scheduler_run,
+    list_model_training_scheduler_runs,
+    training_data_quality_gate,
+)
 
 
 WINDOW_SECONDS = {
@@ -714,6 +723,7 @@ class ScheduledRunner:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._schedule_lock = threading.Lock()
+        self._model_training_run_lock = threading.Lock()
         self.last_result: RunResult | None = None
         self.last_gap_recovery: GapRecoveryResult | None = None
         self.next_run_at: str | None = None
@@ -721,16 +731,22 @@ class ScheduledRunner:
         self.last_watchdog_event: dict[str, Any] | None = None
         self.last_watchdog_check_at: str | None = None
         self._last_watchdog_kick_window_end: str | None = None
+        self._model_training_thread: threading.Thread | None = None
+        self.last_model_training_result: dict[str, Any] | None = None
+        self.last_model_training_check_at: str | None = None
+        self.next_model_training_at: str | None = None
 
     def start(self) -> None:
         self._stop.clear()
         self.start_worker()
         if self._thread and self._thread.is_alive():
             self.start_watchdog()
+            self.start_model_training_scheduler()
             return
         self._thread = threading.Thread(target=self._loop, name="sre-agent-scheduler", daemon=True)
         self._thread.start()
         self.start_watchdog()
+        self.start_model_training_scheduler()
 
     def start_watchdog(self) -> None:
         if not self.config.runner_watchdog_enabled:
@@ -739,6 +755,18 @@ class ScheduledRunner:
             return
         self._watchdog_thread = threading.Thread(target=self._watchdog_loop, name="sre-agent-runner-watchdog", daemon=True)
         self._watchdog_thread.start()
+
+    def start_model_training_scheduler(self) -> None:
+        if not self.config.model_training_scheduler_enabled:
+            return
+        if self._model_training_thread and self._model_training_thread.is_alive():
+            return
+        self._model_training_thread = threading.Thread(
+            target=self._model_training_scheduler_loop,
+            name="sre-agent-model-training-scheduler",
+            daemon=True,
+        )
+        self._model_training_thread.start()
 
     def start_worker(self) -> None:
         live_workers = [thread for thread in self._worker_threads if thread.is_alive()]
@@ -844,6 +872,18 @@ from (
             "last_watchdog_check_at": self.last_watchdog_check_at,
             "last_watchdog_event": self.last_watchdog_event,
             "recent_watchdog_events": list_runner_watchdog_events(self.config.database_url, limit=10),
+            "model_training_scheduler_enabled": self.config.model_training_scheduler_enabled,
+            "model_training_scheduler_running": bool(
+                self._model_training_thread and self._model_training_thread.is_alive()
+            ),
+            "model_training_daily_at": self.config.model_training_daily_at,
+            "model_training_timezone": self.config.model_training_timezone,
+            "model_training_days": self.config.model_training_days,
+            "model_training_min_coverage_pct": self.config.model_training_min_coverage_pct,
+            "next_model_training_at": self.next_model_training_at,
+            "last_model_training_check_at": self.last_model_training_check_at,
+            "last_model_training_result": self.last_model_training_result,
+            "recent_model_training_scheduler_runs": list_model_training_scheduler_runs(self.config.database_url, limit=5),
             "next_run_at": self.next_run_at,
             "current_job": next(iter(self.current_jobs.values()), None),
             "current_jobs": list(self.current_jobs.values()),
@@ -1039,6 +1079,147 @@ from (
                     details={"error": str(exc)},
                 )
             self._stop.wait(self.config.runner_watchdog_interval_seconds)
+
+    def _next_model_training_time(self, after: datetime | None = None) -> datetime:
+        after = after or utc_now()
+        try:
+            hour_text, minute_text = self.config.model_training_daily_at.split(":", 1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+        except ValueError:
+            hour = 4
+            minute = 0
+        try:
+            local_tz = ZoneInfo(self.config.model_training_timezone)
+        except Exception:  # noqa: BLE001 - bad timezone should fall back predictably.
+            local_tz = timezone.utc
+        local_after = after.astimezone(local_tz)
+        candidate = local_after.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= local_after:
+            candidate += timedelta(days=1)
+        return candidate.astimezone(timezone.utc)
+
+    def _model_training_model_version(self, scheduled_for: datetime) -> str:
+        return f"seasonal-quantile-auto-{scheduled_for.strftime('%Y%m%d%H%M')}"
+
+    def run_model_training_once(
+        self,
+        model_version: str | None = None,
+        scheduled_for: datetime | None = None,
+        trigger_source: str = "service_scheduler",
+    ) -> dict[str, Any]:
+        scheduled_for = scheduled_for or utc_now()
+        model_version = model_version or self._model_training_model_version(scheduled_for)
+        scheduler_run = create_model_training_scheduler_run(
+            self.config.database_url,
+            model_version=model_version,
+            scheduled_for=scheduled_for,
+            trigger_source=trigger_source,
+        )
+        scheduler_run_id = int(scheduler_run["id"])
+        if not self._model_training_run_lock.acquire(blocking=False):
+            result = finish_model_training_scheduler_run(
+                self.config.database_url,
+                scheduler_run_id,
+                "blocked_concurrent_run",
+                error="another model training scheduler run is already active",
+            )
+            self.last_model_training_result = result
+            return {"status": "blocked_concurrent_run", "scheduler_run": result}
+        try:
+            precheck = training_data_quality_gate(
+                self.config.database_url,
+                days=self.config.model_training_days,
+                window_size=self.config.window_size,
+                min_coverage_pct=self.config.model_training_min_coverage_pct,
+                max_latest_lag_minutes=self.config.runner_watchdog_data_lag_minutes,
+                min_source_success_pct=95.0,
+            )
+            if not precheck.get("eligible"):
+                result = finish_model_training_scheduler_run(
+                    self.config.database_url,
+                    scheduler_run_id,
+                    "blocked_precheck",
+                    precheck=precheck,
+                    error="training data quality gate blocked automatic training",
+                )
+                self.last_model_training_result = result
+                return {"status": "blocked_precheck", "scheduler_run": result, "precheck": precheck}
+
+            training = create_training_run(
+                self.config.database_url,
+                days=self.config.model_training_days,
+                model_version=model_version,
+                model_type="seasonal_quantile_v1",
+                window_size=self.config.window_size,
+                dry_run=False,
+                activate=False,
+                min_coverage_pct=self.config.model_training_min_coverage_pct,
+                min_bucket_samples=self.config.model_training_min_bucket_samples,
+                min_precise_bucket_samples=self.config.model_training_min_precise_bucket_samples,
+            )
+            training_run_id = int(training["training_run"]["id"])
+            activation = activate_model_version(
+                self.config.database_url,
+                model_version=model_version,
+                policy=self.config.model_training_activation_policy,
+                force=False,
+            )
+            activation_event_id = None
+            if activation.get("event") and activation["event"].get("id"):
+                activation_event_id = int(activation["event"]["id"])
+            final_status = "activated" if activation.get("status") == "activated" else "blocked_activation"
+            result = finish_model_training_scheduler_run(
+                self.config.database_url,
+                scheduler_run_id,
+                final_status,
+                precheck=precheck,
+                training_run_id=training_run_id,
+                activation_result=activation,
+                activation_event_id=activation_event_id,
+                error=None if final_status == "activated" else "activation gate blocked trained candidate model",
+            )
+            self.last_model_training_result = result
+            return {
+                "status": final_status,
+                "scheduler_run": result,
+                "precheck": precheck,
+                "training": training,
+                "activation": activation,
+            }
+        except Exception as exc:  # noqa: BLE001 - scheduler should audit failures and continue.
+            result = finish_model_training_scheduler_run(
+                self.config.database_url,
+                scheduler_run_id,
+                "error",
+                error=str(exc),
+            )
+            self.last_model_training_result = result
+            return {"status": "error", "scheduler_run": result, "error": str(exc)}
+        finally:
+            self._model_training_run_lock.release()
+
+    def _model_training_scheduler_loop(self) -> None:
+        if self.config.model_training_startup_delay_seconds:
+            self._stop.wait(self.config.model_training_startup_delay_seconds)
+        while not self._stop.is_set():
+            try:
+                next_run = self._next_model_training_time()
+                self.next_model_training_at = format_time(next_run)
+                wait_seconds = max(0.0, (next_run - utc_now()).total_seconds())
+                if self._stop.wait(wait_seconds):
+                    return
+                self.last_model_training_check_at = format_time(utc_now())
+                self.run_model_training_once(scheduled_for=next_run)
+            except Exception as exc:  # noqa: BLE001 - keep scheduler alive.
+                self.last_model_training_result = {
+                    "status": "error",
+                    "error": str(exc),
+                    "created_at": format_time(utc_now()),
+                }
+                self._stop.wait(60)
 
     def _worker_loop(self, worker_name: str) -> None:
         while not self._stop.is_set():

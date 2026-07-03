@@ -217,6 +217,7 @@ P0 模型框架保存训练计划、模型版本、质量报告和 feedback labe
 | `service_metric_models` | 保存 `service_id + metric_name` 级别的模型版本、状态、特征定义和质量摘要 |
 | `service_metric_model_buckets` | 保存未来 `seasonal_quantile_v1` 的时间槽 bucket、quantile、MAD 和 confidence |
 | `service_metric_model_evaluations` | 保存 backtest、shadow mode、误报漏报等模型验证结果 |
+| `model_training_scheduler_runs` | 保存服务内自动训练 scheduler 的 precheck、training_run、activation/blocked 结果和错误 |
 | `model_activation_events` | 保存模型激活、阻断和回滚决策，包含策略、gate 结果、previous model 和审计时间 |
 | `risk_feedback_labels` | 保存 risk 误报、漏报、confirmed incident 等反馈标签，用于后续半监督校准 |
 | `risk_calibration_rules` | 保存由 feedback 生成的服务/指标/evidence 权重校准规则，risk score 会读取 enabled 规则 |

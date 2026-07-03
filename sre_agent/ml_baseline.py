@@ -581,6 +581,225 @@ where id = {run_id};
     }
 
 
+def training_data_quality_gate(
+    database_url: str,
+    days: int = 30,
+    window_size: str = "15m",
+    min_coverage_pct: float = 95.0,
+    max_latest_lag_minutes: int = 60,
+    min_source_success_pct: float = 95.0,
+    service_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    until = utc_now()
+    since = until - timedelta(days=days)
+    step_seconds = WINDOW_SECONDS.get(window_size, 900)
+    service_filter = _service_filter(service_ids)
+    sql = f"""
+with service_scope as (
+  select service_id
+  from services s
+  where true {service_filter}
+),
+expected as (
+  select greatest(1, count(*)::int) as expected_windows
+  from generate_series(
+    {sql_literal(format_time(since))}::timestamptz,
+    {sql_literal(format_time(until))}::timestamptz - interval '{step_seconds} seconds',
+    interval '{step_seconds} seconds'
+  )
+),
+windows as (
+  select w.*
+  from service_metric_windows w
+  where w.window_size = {sql_literal(window_size)}
+    and w.window_start >= {sql_literal(format_time(since))}
+    and w.window_start < {sql_literal(format_time(until))}
+    and w.service_id in (select service_id from service_scope)
+),
+per_service as (
+  select
+    s.service_id,
+    coalesce(count(w.*), 0)::int as rows,
+    max(w.window_end) as latest_window_end,
+    count(*) filter (where w.service_id is not null and w.newrelic->>'status' = 'collected')::int as newrelic_collected_rows,
+    count(*) filter (
+      where w.service_id is not null
+        and coalesce(w.prometheus_resources->>'status', 'collected') in ('collected', 'missing')
+    )::int as prometheus_ok_rows,
+    count(*) filter (
+      where w.service_id is not null
+        and coalesce(w.data_quality->'errors', '[]'::jsonb) <> '[]'::jsonb
+    )::int as data_quality_error_rows,
+    count(*) filter (
+      where w.service_id is not null
+        and coalesce((w.newrelic->>'request_count')::double precision, 0) = 0
+        and coalesce((w.newrelic->>'rpm')::double precision, 0) = 0
+    )::int as zero_traffic_rows
+  from service_scope s
+  left join windows w on w.service_id = s.service_id
+  group by s.service_id
+)
+select row_to_json(result)
+from (
+  select
+    {sql_literal(format_time(since))}::timestamptz as since,
+    {sql_literal(format_time(until))}::timestamptz as until,
+    {sql_literal(window_size)} as window_size,
+    (select count(*)::int from service_scope) as service_count,
+    (select expected_windows from expected) as expected_windows_per_service,
+    coalesce(sum(rows), 0)::int as rows,
+    round(coalesce(sum(rows), 0)::numeric / nullif((select expected_windows from expected) * greatest((select count(*) from service_scope), 1), 0) * 100, 2) as overall_coverage_pct,
+    round(coalesce(sum(newrelic_collected_rows), 0)::numeric / nullif(coalesce(sum(rows), 0), 0) * 100, 2) as newrelic_success_pct,
+    round(coalesce(sum(prometheus_ok_rows), 0)::numeric / nullif(coalesce(sum(rows), 0), 0) * 100, 2) as prometheus_success_pct,
+    coalesce(sum(data_quality_error_rows), 0)::int as data_quality_error_rows,
+    coalesce(max(extract(epoch from ({sql_literal(format_time(until))}::timestamptz - latest_window_end)) / 60.0), 999999) as max_latest_lag_minutes,
+    coalesce(json_agg(row_to_json(ps) order by ps.service_id), '[]'::json) as services
+  from (
+    select
+      service_id,
+      rows,
+      latest_window_end,
+      round(rows::numeric / nullif((select expected_windows from expected), 0) * 100, 2) as coverage_pct,
+      newrelic_collected_rows,
+      round(newrelic_collected_rows::numeric / nullif(rows, 0) * 100, 2) as newrelic_success_pct,
+      prometheus_ok_rows,
+      round(prometheus_ok_rows::numeric / nullif(rows, 0) * 100, 2) as prometheus_success_pct,
+      data_quality_error_rows,
+      zero_traffic_rows,
+      case
+        when rows::numeric / nullif((select expected_windows from expected), 0) * 100 < {min_coverage_pct} then false
+        when newrelic_collected_rows::numeric / nullif(rows, 0) * 100 < {min_source_success_pct} then false
+        when prometheus_ok_rows::numeric / nullif(rows, 0) * 100 < {min_source_success_pct} then false
+        when data_quality_error_rows > 0 then false
+        else true
+      end as eligible
+    from per_service
+  ) ps
+) result;
+"""
+    report = psql_json(database_url, sql) or {}
+    overall_coverage_pct = float(report.get("overall_coverage_pct") or 0)
+    newrelic_success_pct = float(report.get("newrelic_success_pct") or 0)
+    prometheus_success_pct = float(report.get("prometheus_success_pct") or 0)
+    max_lag = float(report.get("max_latest_lag_minutes") or 999999)
+    service_count = int(report.get("service_count") or 0)
+    services = report.get("services") or []
+    eligible_service_count = sum(1 for service in services if service.get("eligible"))
+    gates = [
+        {
+            "name": "overall_coverage",
+            "passed": overall_coverage_pct >= min_coverage_pct,
+            "actual": overall_coverage_pct,
+            "expected": min_coverage_pct,
+        },
+        {
+            "name": "newrelic_success",
+            "passed": newrelic_success_pct >= min_source_success_pct,
+            "actual": newrelic_success_pct,
+            "expected": min_source_success_pct,
+        },
+        {
+            "name": "prometheus_success",
+            "passed": prometheus_success_pct >= min_source_success_pct,
+            "actual": prometheus_success_pct,
+            "expected": min_source_success_pct,
+        },
+        {
+            "name": "latest_data_lag",
+            "passed": max_lag <= max_latest_lag_minutes,
+            "actual": max_lag,
+            "expected": max_latest_lag_minutes,
+        },
+        {
+            "name": "eligible_services",
+            "passed": eligible_service_count == service_count and service_count > 0,
+            "actual": eligible_service_count,
+            "expected": service_count,
+        },
+    ]
+    return {
+        **report,
+        "days": days,
+        "policy": {
+            "min_coverage_pct": min_coverage_pct,
+            "max_latest_lag_minutes": max_latest_lag_minutes,
+            "min_source_success_pct": min_source_success_pct,
+        },
+        "eligible_service_count": eligible_service_count,
+        "status": "passed" if all(gate["passed"] for gate in gates) else "blocked",
+        "eligible": all(gate["passed"] for gate in gates),
+        "gates": gates,
+    }
+
+
+def create_model_training_scheduler_run(
+    database_url: str,
+    model_version: str,
+    scheduled_for: datetime | None = None,
+    trigger_source: str = "service_scheduler",
+) -> dict[str, Any]:
+    sql = """
+insert into model_training_scheduler_runs (
+  model_version, status, trigger_source, scheduled_for, started_at
+) values (
+  {model_version}, 'running', {trigger_source}, {scheduled_for}, now()
+) returning row_to_json(model_training_scheduler_runs);
+""".format(
+        model_version=sql_literal(model_version),
+        trigger_source=sql_literal(trigger_source),
+        scheduled_for=sql_literal(format_time(scheduled_for)) if scheduled_for else "null",
+    )
+    return psql_json(database_url, sql)
+
+
+def finish_model_training_scheduler_run(
+    database_url: str,
+    run_id: int,
+    status: str,
+    precheck: dict[str, Any] | None = None,
+    training_run_id: int | None = None,
+    activation_result: dict[str, Any] | None = None,
+    activation_event_id: int | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    sql = """
+update model_training_scheduler_runs
+set status = {status},
+    precheck = coalesce({precheck}::jsonb, precheck),
+    training_run_id = coalesce({training_run_id}, training_run_id),
+    activation_result = coalesce({activation_result}::jsonb, activation_result),
+    activation_event_id = coalesce({activation_event_id}, activation_event_id),
+    error = {error},
+    finished_at = now()
+where id = {run_id}
+returning row_to_json(model_training_scheduler_runs);
+""".format(
+        status=sql_literal(status),
+        precheck=sql_literal(precheck) if precheck is not None else "null",
+        training_run_id=training_run_id if training_run_id is not None else "null",
+        activation_result=sql_literal(activation_result) if activation_result is not None else "null",
+        activation_event_id=activation_event_id if activation_event_id is not None else "null",
+        error=sql_literal(error),
+        run_id=run_id,
+    )
+    return psql_json(database_url, sql)
+
+
+def list_model_training_scheduler_runs(database_url: str, limit: int = 20) -> list[dict[str, Any]]:
+    sql = f"""
+select coalesce(json_agg(row_to_json(r) order by created_at desc), '[]'::json)
+from (
+  select id, model_version, status, trigger_source, scheduled_for, training_run_id,
+         activation_event_id, precheck, activation_result, error, started_at,
+         finished_at, created_at
+  from model_training_scheduler_runs
+  order by created_at desc
+  limit {max(1, min(limit, 100))}
+) r;
+"""
+    return psql_json(database_url, sql) or []
+
+
 def train_seasonal_quantile_model(
     database_url: str,
     run_id: int,

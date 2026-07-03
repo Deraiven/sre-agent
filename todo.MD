@@ -31,7 +31,7 @@ These items are the core of the SRE Agent product, not optional polish.
 | P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | working | Shows coverage/readiness, model freshness, and drift via `/models/quality`, `/models/freshness`, and `/models/drift` |
 | P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
-| P0 | Automatic retraining schedule | local automation active, production scheduler pending | Three local automations cover the early retraining schedule; production still needs a service-owned scheduler or Kubernetes CronJob |
+| P0 | Automatic retraining schedule | service scheduler implemented, production enablement pending | Service-owned scheduler can run daily training, precheck data quality, gate activation, and audit activated/blocked runs; production still needs enablement and monitoring |
 | P0 | Feedback-aware risk calibration | framework working, labels accumulating | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
 
 ### P0: ML-Driven Dynamic Baselines
@@ -119,9 +119,10 @@ Remaining P0 work:
 - Generate and validate calibration rules after enough reviewed
   `risk_feedback_labels` exist, then verify matched evidence changes risk in
   the expected direction.
-- Productize retraining into a service-owned scheduler or Kubernetes CronJob:
-  train, evaluate quality/freshness/drift gates, activate or write a blocked
-  activation event, and rollback when post-activation signals regress.
+- Enable and monitor the service-owned retraining scheduler in production:
+  configure the daily window, data-quality thresholds, activation policy, alert
+  on blocked/error scheduler runs, and decide whether Kubernetes should run it
+  inside the service or as a dedicated CronJob.
 - Deploy the agent inside `storehub-pro` with RBAC, Secrets, health checks,
   runner/worker separation, and self-monitoring metrics.
 - Keep realtime Kubernetes inspect stable under private API slowness by using
@@ -352,7 +353,7 @@ Acceptance criteria:
 | P0 | Deploy service inside `storehub-pro` | pending |
 | P0 | Add Kubernetes ServiceAccount and read-only RBAC | pending |
 | P0 | Move secrets to Kubernetes Secret or external secret manager | pending |
-| P0 | Productionize retraining scheduler / CronJob with activation gate | pending |
+| P0 | Enable retraining scheduler / CronJob in production with alerts | code done, deployment pending |
 | P1 | Replace local launchd/tunnel runtime with cluster Deployment | pending |
 | P1 | Add health checks and resource requests/limits | pending |
 | P1 | Add self-monitoring metrics for runner and API | pending |

@@ -180,6 +180,28 @@ create table if not exists service_metric_training_runs (
 create index if not exists service_metric_training_runs_lookup_idx
   on service_metric_training_runs (model_version, status, created_at desc);
 
+create table if not exists model_training_scheduler_runs (
+  id bigserial primary key,
+  model_version text not null,
+  status text not null default 'planned',
+  trigger_source text not null default 'service_scheduler',
+  scheduled_for timestamptz,
+  training_run_id bigint references service_metric_training_runs(id),
+  activation_event_id bigint,
+  precheck jsonb not null default '{}',
+  activation_result jsonb not null default '{}',
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists model_training_scheduler_runs_created_idx
+  on model_training_scheduler_runs (created_at desc);
+
+create index if not exists model_training_scheduler_runs_model_idx
+  on model_training_scheduler_runs (model_version, status, created_at desc);
+
 create table if not exists service_metric_models (
   id bigserial primary key,
   service_id text not null references services(service_id),
