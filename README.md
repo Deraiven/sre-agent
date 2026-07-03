@@ -152,6 +152,8 @@ curl -X POST http://127.0.0.1:8080/risk/score \
   -d '{"service_id":"auth-api","lookback_hours":6}'
 
 curl 'http://127.0.0.1:8080/models/quality?days=30'
+curl 'http://127.0.0.1:8080/models/freshness?model_version=seasonal-quantile-v2-20260626'
+curl 'http://127.0.0.1:8080/models/drift?lookback_hours=24'
 
 curl -X POST http://127.0.0.1:8080/models/train \
   -H 'Content-Type: application/json' \
@@ -196,10 +198,14 @@ The first intelligence layer is deliberately rule-based:
 - `inspect/incident` supports synchronous and asynchronous incident inspection.
   It persists inspect requests/results, returns `summary` and `timeline`, and
   accepts feedback for confirmed root cause learning.
-- `models/quality`, `models/train`, and `models/training_runs` provide the P0
-  unsupervised dynamic-baseline workflow. The first trainable version builds
-  `seasonal_quantile_v1` model buckets from historical 15-minute windows and
-  stores evaluated models without activating them unless requested. Active
-  models are consumed by `risk/score` through seasonal bucket fallback:
+- `models/quality`, `models/freshness`, `models/drift`, `models/train`, and
+  `models/training_runs` provide the P0 unsupervised dynamic-baseline workflow.
+  Freshness reports whether active models are stale relative to the latest
+  metric windows; drift reports whether recent values are breaching active
+  seasonal buckets by p95/p99 rate or robust MAD score. The first trainable
+  version builds `seasonal_quantile_v1` model buckets from historical
+  15-minute windows and stores evaluated models without activating them unless
+  requested. Active models are consumed by `risk/score` through seasonal bucket
+  fallback:
   `weekday + hour + minute_slot`, `hour + minute_slot`, `weekday + hour`,
   `hour`, then `global`.

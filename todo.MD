@@ -29,9 +29,9 @@ These items are the core of the SRE Agent product, not optional polish.
 | --- | --- | --- | --- |
 | P0 | Generate SLO recommendations | reviewed | 51 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
 | P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
-| P0 | Baseline model quality report | framework added | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
+| P0 | Baseline model quality report | working | Shows coverage/readiness, model freshness, and drift via `/models/quality`, `/models/freshness`, and `/models/drift` |
 | P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
-| P0 | Automatic retraining schedule | schema/API added, scheduler pending | Refresh baselines daily or weekly with versioned model snapshots and rollback |
+| P0 | Automatic retraining schedule | local automation active, production scheduler pending | Three local automations cover the early retraining schedule; production still needs versioned snapshots, reviewed activation, and rollback |
 | P0 | Feedback-aware risk calibration | feedback label table/API added, calibration pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
 
 ### P0: ML-Driven Dynamic Baselines
@@ -91,13 +91,16 @@ Framework completed:
 - Added risk feedback label API.
 - Added `/risk/score.dynamic_baseline_model` fallback status.
 - Added active-model residual scoring in `/risk/score.dynamic_baseline_risk`.
+- Added `/models/freshness` for active model lag detection.
+- Added `/models/drift` for recent residual, p95/p99 breach-rate, and robust
+  MAD drift detection.
 
 Current activated model state:
 
 - `seasonal-quantile-v2-20260626` is active for eligible SLO-candidate HTTP
   services with sufficient coverage.
-- 360 service/metric models are active across 36 services.
-- 147 evaluated models remain inactive for services intentionally excluded from
+- 460 service/metric models are active across 46 services.
+- 47 evaluated models remain inactive for services intentionally excluded from
   automatic activation, such as consumer/job/streaming/edge candidates and
   services still in reliability roadmap review.
 - `/risk/score` loads active seasonal buckets in this fallback order:
@@ -108,10 +111,50 @@ Current activated model state:
 Remaining P0 work:
 
 - Formalize automatic activation and rollback policy instead of manual SQL.
-- Add model freshness and drift checks to the quality report.
-- Schedule daily or weekly retraining with a reviewed activation gate.
+- Productize the three local retraining automations into a service-owned
+  scheduler or Kubernetes CronJob with a reviewed activation gate.
 - Use `risk_feedback_labels` to calibrate residual thresholds and reduce false
   positives during normal peak periods.
+
+### Later: Domain-Specific SLI for Non-HTTP Services
+
+Goal:
+
+- Replace provisional or domain-specific SLO placeholders with service-shape
+  appropriate SLI metrics.
+- Avoid using HTTP request count, HTTP availability, or latency for services
+  whose reliability contract is actually queue processing, scheduled work,
+  streaming delivery, or webhook delivery.
+
+Initial scope:
+
+| Service shape | Candidate services | Required SLI metrics |
+| --- | --- | --- |
+| Consumer | `core-event-consumer-payment`, `core-event-consumer-zendesk`, other `core-event-consumer-*` and `ecommerce-v1-consumer*` services | message consume success rate, consumer lag, DLQ count, retry exhausted count, processing latency, freshness age |
+| Job | `backoffice-migrate-jobs`, `backoffice-scheduled-jobs` | job success rate, last successful run age, duration p95/p99, failed run count, missed schedule count |
+| Streaming / SSE | `realtime-event-broker-svc` | connection success rate, disconnect/error rate, event delivery success rate, publish-to-deliver latency, active connection saturation |
+| Low-traffic adapter / webhook | `3p-webhook-adapter-infra-svc` and low-volume adapters | webhook delivery success rate, external dependency error rate, retry exhausted count, callback latency, dead-letter/failure count |
+
+Implementation notes:
+
+- Prefer application-emitted metrics in New Relic or Prometheus over inferring
+  reliability from sparse HTTP traffic.
+- Add these metrics to `service_metric_windows` under a stable namespace such as
+  `domain_sli`.
+- Extend `slo_recommendations` so `target_type=provisional_slo_candidate` and
+  `target_type=edge_service` can be promoted only after domain SLI coverage is
+  sufficient.
+- Extend risk scoring so domain SLI deviations contribute evidence and points,
+  but keep request count/rpm as traffic context.
+
+Acceptance criteria:
+
+- Each provisional/domain-specific service has at least one business-relevant
+  SLI with 14-30 days of coverage.
+- SLO recommendation can explain whether the service is HTTP-shaped,
+  queue-shaped, job-shaped, streaming-shaped, or webhook-shaped.
+- Risk evidence can show domain SLI degradation, such as lag growth, stale job
+  execution, DLQ spike, or webhook retry exhaustion.
 
 ## Known Issues Found During Testing
 
