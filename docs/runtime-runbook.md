@@ -268,6 +268,12 @@ curl -X POST http://127.0.0.1:8080/baseline/recompute_transactions \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["backoffice-v2-bff"],"days":30,"limit":100}'
 
+curl -X POST http://127.0.0.1:8080/slo/recommendations/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"days":30,"replace":true}'
+
+curl 'http://127.0.0.1:8080/slo/recommendations?recommendation_version=slo-rec-v1&limit=20'
+
 curl -X POST http://127.0.0.1:8080/anomalies/mark \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["backoffice-v2-bff"]}'

@@ -373,6 +373,27 @@ create table slo_recommendations (
 );
 ```
 
+当前 `slo-rec-v1` 由 `scripts/generate_slo_recommendations.py` 或
+`POST /slo/recommendations/generate` 从 `service_metric_windows` 的最近 30
+天 `15m` 窗口以及 `service_baselines` 生成。推荐值只作为 `pending_review`
+候选，不会自动覆盖 `service-catalog.yaml`：
+
+- `historical_baseline`: 保存覆盖率、New Relic 覆盖率、请求量、rpm、
+  request-weighted availability、latency/error-rate 分位数和样本量。
+- `recommended_slo`: 保存建议的 availability、error rate、p95/p99
+  latency、服务类型、`target_type`、来源和 `reviewed=false`。job/consumer
+  以及 SSE/streaming 服务不直接写 HTTP latency SLO，而是标记
+  `domain_specific_sli_required`。
+- `target_type=edge_service`: 表示该服务是从主业务链路拆出的边缘 job 或
+  consumer，不用 HTTP request/latency 判断 SLO，需要后续定义 job success
+  rate、freshness、lag、DLQ 等领域 SLI。
+- `target_type=provisional_slo_candidate`: 表示当前先使用历史计算值作为暂定
+  SLO，后续等服务自定义 SLI 指标接入监控平台后再重算为正式候选。
+- `confidence`: `high` 表示样本覆盖较完整且无 review flag；`medium`
+  表示可作为初始建议但需要 owner/SRE 复核；`low` 表示数据不足。
+- `evidence`: 保存覆盖率、New Relic 覆盖率、availability、latency 推导
+  说明，以及低流量/job/consumer/历史可用性不足等 review required 原因。
+
 ### `artifact_refs`
 
 保存 S3 对象引用。

@@ -137,6 +137,12 @@ curl -X POST http://127.0.0.1:8080/baseline/recompute_transactions \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["backoffice-v2-bff"],"days":30,"limit":100}'
 
+curl -X POST http://127.0.0.1:8080/slo/recommendations/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"days":30,"replace":true}'
+
+curl 'http://127.0.0.1:8080/slo/recommendations?recommendation_version=slo-rec-v1&limit=20'
+
 curl -X POST http://127.0.0.1:8080/anomalies/mark \
   -H 'Content-Type: application/json' \
   -d '{"service_ids":["auth-api"]}'
@@ -170,6 +176,9 @@ The first intelligence layer is deliberately rule-based:
   15-minute windows.
 - `baseline/recompute_transactions` builds New Relic Transaction latency
   baselines so trace inspect can report slow transaction deviation percentages.
+- `slo/recommendations/generate` writes pending-review SLO recommendations from
+  `service_metric_windows` plus `service_baselines`; `slo/recommendations`
+  lists generated candidates for owner review.
 - `runner/runs` and `collection/jobs` expose collection audit state, job
   failures, retries, elapsed seconds, and rows written.
 - `data/coverage` and `gaps` expose coverage and missing/incomplete windows

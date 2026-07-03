@@ -1,6 +1,6 @@
 # SRE Agent TODO
 
-Updated: 2026-06-23
+Updated: 2026-06-24
 
 This file tracks known limitations, discovered issues, and next implementation
 work for the SRE Agent. Keep it current when behavior, config, or docs change.
@@ -14,6 +14,7 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Gap recovery | Working | Runner is bounded to near-term gaps; historical gaps are handled by a standalone backfill worker |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
+| SLO recommendations | Generated | `slo-rec-v1` wrote 51 pending-review recommendations from the last 30d of 15m windows |
 | Dynamic service baselines | Working | Rule-based seasonal baselines exist; ML-driven dynamic baselines are P0 |
 | Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
 | Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
@@ -26,6 +27,7 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
+| P0 | Generate SLO recommendations | generated, owner review pending | 51 services have initial availability/error-rate/p95/p99 candidates in `slo_recommendations` |
 | P0 | ML-driven dynamic baseline per service/metric | first batch evaluated, activation pending | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | framework added | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
 | P0 | Risk evaluator based on dynamic baseline residuals | framework added, residual scoring pending | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |

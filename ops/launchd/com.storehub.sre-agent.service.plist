@@ -26,12 +26,24 @@
     <string>900</string>
     <key>SRE_AGENT_LOOKBACK_MINUTES</key>
     <string>60</string>
+    <key>SRE_AGENT_WORKER_CONCURRENCY</key>
+    <string>6</string>
     <key>SRE_AGENT_GAP_RECOVERY_ENABLED</key>
     <string>true</string>
     <key>SRE_AGENT_GAP_LOOKBACK_HOURS</key>
     <string>24</string>
     <key>SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN</key>
     <string>8</string>
+    <key>SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED</key>
+    <string>true</string>
+    <key>SRE_AGENT_MODEL_TRAINING_DAILY_AT</key>
+    <string>04:00</string>
+    <key>SRE_AGENT_MODEL_TRAINING_TIMEZONE</key>
+    <string>Asia/Shanghai</string>
+    <key>SRE_AGENT_MODEL_TRAINING_DAYS</key>
+    <string>30</string>
+    <key>SRE_AGENT_MODEL_TRAINING_MIN_COVERAGE_PCT</key>
+    <string>95</string>
     <key>KUBECTL_AWS_PROFILE</key>
     <string>pro</string>
     <key>KUBECTL_PROXY_URL</key>
