@@ -83,6 +83,10 @@ of complete 15-minute windows, then scans only the recent runner-owned gap
 window for missing, partial, or failed windows and enqueues up to 8 prioritized
 near-term gap-recovery windows. Large historical gap recovery runs separately,
 so it cannot starve realtime collection workers.
+The runner also includes an internal watchdog. It records
+`runner_watchdog_events`, restarts missing scheduler/worker threads, requeues
+stale running jobs, and automatically kicks realtime collection if `next_run_at`
+is overdue or the latest metric window falls too far behind.
 The API returns quickly while the worker drains jobs in the background.
 
 For historical gaps outside the runner gap window, run the standalone worker
@@ -151,6 +155,20 @@ curl -X POST http://127.0.0.1:8080/risk/score \
   -H 'Content-Type: application/json' \
   -d '{"service_id":"auth-api","lookback_hours":6}'
 
+curl -X POST http://127.0.0.1:8080/risk/feedback \
+  -H 'Content-Type: application/json' \
+  -d '{"service_id":"auth-api","label_type":"false_positive","actual_severity":"normal","payload":{"reason":"business peak, no user impact"}}'
+
+curl 'http://127.0.0.1:8080/risk/feedback/candidates?lookback_hours=6&min_score=50&limit=20'
+
+curl 'http://127.0.0.1:8080/risk/feedback/report?days=30'
+
+curl -X POST http://127.0.0.1:8080/risk/calibration/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"days":30,"min_labels":2,"activate":true}'
+
+curl 'http://127.0.0.1:8080/risk/calibration/rules?enabled=true'
+
 curl 'http://127.0.0.1:8080/models/quality?days=30'
 curl 'http://127.0.0.1:8080/models/freshness?model_version=seasonal-quantile-v2-20260626'
 curl 'http://127.0.0.1:8080/models/drift?lookback_hours=24'
@@ -158,6 +176,18 @@ curl 'http://127.0.0.1:8080/models/drift?lookback_hours=24'
 curl -X POST http://127.0.0.1:8080/models/train \
   -H 'Content-Type: application/json' \
   -d '{"dry_run":true,"days":30,"model_version":"seasonal-quantile-v1"}'
+
+curl 'http://127.0.0.1:8080/models/activation/evaluate?model_version=seasonal-quantile-v4-20260703'
+
+curl -X POST http://127.0.0.1:8080/models/activate \
+  -H 'Content-Type: application/json' \
+  -d '{"model_version":"seasonal-quantile-v4-20260703"}'
+
+curl -X POST http://127.0.0.1:8080/models/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{"target_model_version":"seasonal-quantile-v3-20260701","reason":"post-activation false positives increased"}'
+
+curl 'http://127.0.0.1:8080/models/activation/events?limit=20'
 
 curl http://127.0.0.1:8080/models/training_runs
 
@@ -190,11 +220,18 @@ The first intelligence layer is deliberately rule-based:
 - `risk/score` computes risk v2 from recent window scores, active ML seasonal
   baseline residuals, and persisted New Relic transaction baseline deviations
   when trace evidence exists. ML evidence is returned under
-  `dynamic_baseline_risk` and merged into `top_evidence`.
+  `dynamic_baseline_risk` and merged into `top_evidence`. If enabled
+  `risk_calibration_rules` exist, matching ML evidence points are adjusted from
+  human feedback and the applied rules are returned under `risk_calibration`.
   High request volume or rpm is treated as traffic context, not risk by itself;
   resource metrics are compared against multiple weighted baselines. The
   service's weekday/hour/15m slot baseline has the highest weight, while global
   baseline still participates with a small weight as long-term context.
+- `risk/feedback/candidates`, `risk/feedback`, `risk/feedback/report`, and
+  `risk/calibration/generate` close the feedback loop: the agent lists high-risk
+  windows for human review, humans mark `false_positive`, `false_negative`, or
+  `confirmed_incident`, then the agent summarizes recent labels and generates
+  auditable calibration rules that dampen or amplify matching evidence.
 - `inspect/incident` supports synchronous and asynchronous incident inspection.
   It persists inspect requests/results, returns `summary` and `timeline`, and
   accepts feedback for confirmed root cause learning.
@@ -209,3 +246,15 @@ The first intelligence layer is deliberately rule-based:
   fallback:
   `weekday + hour + minute_slot`, `hour + minute_slot`, `weekday + hour`,
   `hour`, then `global`.
+
+Current local P0 snapshot:
+
+- `seasonal-quantile-v4-20260703` is active for 51 services and 507
+  service/metric models.
+- Model activation and rollback are API-driven and audited in
+  `model_activation_events`.
+- Risk feedback currently has 7 reviewed labels in this workspace database: 5
+  confirmed incidents, 2 false positives, and 0 false negatives.
+- Calibration-rule generation is implemented, but no trusted
+  `risk_calibration_rules` are enabled yet; keep reviewing candidates before
+  using calibration as a production gate.

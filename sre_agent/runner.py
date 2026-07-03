@@ -407,6 +407,83 @@ where status = 'running';
     psql_exec(database_url, sql)
 
 
+def reset_stale_collection_jobs(database_url: str, stale_seconds: int) -> list[int]:
+    sql = """
+with stale as (
+  select id
+  from collection_jobs
+  where status = 'running'
+    and started_at is not null
+    and started_at < now() - ({stale_seconds} || ' seconds')::interval
+),
+updated as (
+  update collection_jobs j
+  set status = 'queued',
+      started_at = null,
+      error = coalesce(error || '; ', '') || 'watchdog_requeued_stale_running_job'
+  from stale
+  where j.id = stale.id
+  returning j.id
+)
+select coalesce(json_agg(id order by id), '[]'::json) from updated;
+""".format(stale_seconds=max(1, int(stale_seconds)))
+    return psql_json(database_url, sql) or []
+
+
+def latest_metric_window(database_url: str, window_size: str) -> str | None:
+    sql = """
+select to_json(max(window_end))
+from service_metric_windows
+where window_size = {window_size};
+""".format(window_size=sql_literal(window_size))
+    return psql_json(database_url, sql)
+
+
+def data_lag_minutes(database_url: str, window_size: str) -> float | None:
+    latest = latest_metric_window(database_url, window_size)
+    if not latest:
+        return None
+    latest_dt = parse_time(latest)
+    _, aligned_end = aligned_window_range(utc_now(), window_size, 0)
+    return max(0.0, (aligned_end - latest_dt).total_seconds() / 60.0)
+
+
+def create_runner_watchdog_event(
+    database_url: str,
+    event_type: str,
+    severity: str = "warning",
+    action: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sql = """
+insert into runner_watchdog_events (event_type, severity, action, details)
+values ({event_type}, {severity}, {action}, {details}::jsonb)
+returning row_to_json(runner_watchdog_events);
+""".format(
+        event_type=sql_literal(event_type),
+        severity=sql_literal(severity),
+        action=sql_literal(action),
+        details=sql_literal(details or {}),
+    )
+    return psql_json(database_url, sql) or {}
+
+
+def list_runner_watchdog_events(database_url: str, limit: int = 20) -> list[dict[str, Any]]:
+    sql = """
+select coalesce(json_agg(row_to_json(e) order by created_at desc), '[]'::json)
+from (
+  select id, event_type, severity, action, details, created_at
+  from runner_watchdog_events
+  order by created_at desc
+  limit {limit}
+) e;
+""".format(limit=max(1, min(limit, 100)))
+    try:
+        return psql_json(database_url, sql) or []
+    except subprocess.CalledProcessError:
+        return []
+
+
 def parse_collection_stdout(stdout: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for line in stdout.splitlines():
@@ -632,21 +709,36 @@ class ScheduledRunner:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self._thread: threading.Thread | None = None
+        self._watchdog_thread: threading.Thread | None = None
         self._worker_threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._schedule_lock = threading.Lock()
         self.last_result: RunResult | None = None
         self.last_gap_recovery: GapRecoveryResult | None = None
         self.next_run_at: str | None = None
         self.current_jobs: dict[str, dict[str, Any]] = {}
+        self.last_watchdog_event: dict[str, Any] | None = None
+        self.last_watchdog_check_at: str | None = None
+        self._last_watchdog_kick_window_end: str | None = None
 
     def start(self) -> None:
         self._stop.clear()
         self.start_worker()
         if self._thread and self._thread.is_alive():
+            self.start_watchdog()
             return
         self._thread = threading.Thread(target=self._loop, name="sre-agent-scheduler", daemon=True)
         self._thread.start()
+        self.start_watchdog()
+
+    def start_watchdog(self) -> None:
+        if not self.config.runner_watchdog_enabled:
+            return
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, name="sre-agent-runner-watchdog", daemon=True)
+        self._watchdog_thread.start()
 
     def start_worker(self) -> None:
         live_workers = [thread for thread in self._worker_threads if thread.is_alive()]
@@ -727,6 +819,7 @@ from (
         ) or {}
         return {
             "enabled": self.config.runner_enabled,
+            "scheduler_thread_running": bool(self._thread and self._thread.is_alive()),
             "running": bool(self.current_jobs),
             "worker_running": any(thread.is_alive() for thread in self._worker_threads),
             "worker_concurrency": self.config.worker_concurrency,
@@ -742,6 +835,15 @@ from (
             "gap_recovery_order": self.config.gap_recovery_order,
             "skip_kubernetes": self.config.skip_kubernetes,
             "backfill_skip_kubernetes": self.config.backfill_skip_kubernetes,
+            "watchdog_enabled": self.config.runner_watchdog_enabled,
+            "watchdog_running": bool(self._watchdog_thread and self._watchdog_thread.is_alive()),
+            "watchdog_interval_seconds": self.config.runner_watchdog_interval_seconds,
+            "watchdog_schedule_grace_seconds": self.config.runner_watchdog_schedule_grace_seconds,
+            "watchdog_data_lag_minutes": self.config.runner_watchdog_data_lag_minutes,
+            "watchdog_stale_job_seconds": self.config.runner_watchdog_stale_job_seconds,
+            "last_watchdog_check_at": self.last_watchdog_check_at,
+            "last_watchdog_event": self.last_watchdog_event,
+            "recent_watchdog_events": list_runner_watchdog_events(self.config.database_url, limit=10),
             "next_run_at": self.next_run_at,
             "current_job": next(iter(self.current_jobs.values()), None),
             "current_jobs": list(self.current_jobs.values()),
@@ -752,40 +854,191 @@ from (
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            start, end = aligned_window_range(utc_now(), self.config.window_size, self.config.runner_lookback_minutes)
-            run_id = create_runner_run(
+            try:
+                with self._schedule_lock:
+                    start, end = aligned_window_range(utc_now(), self.config.window_size, self.config.runner_lookback_minutes)
+                    run_id = create_runner_run(
+                        self.config.database_url,
+                        "scheduled",
+                        "queued",
+                        window_start=start,
+                        window_end=end,
+                    )
+                    job_ids = enqueue_collection_jobs(
+                        self.config,
+                        "realtime",
+                        start,
+                        end,
+                        runner_run_id=run_id,
+                        priority=100,
+                    )
+                    self.last_result = RunResult(
+                        status="queued",
+                        started_at=format_time(utc_now()),
+                        finished_at=format_time(utc_now()),
+                        window_start=format_time(start),
+                        window_end=format_time(end),
+                        service_ids=None,
+                        returncode=None,
+                        stdout=json.dumps({"runner_run_id": run_id, "job_ids": job_ids}),
+                        stderr="",
+                        job_ids=job_ids,
+                    )
+                    if self.config.gap_recovery_enabled and self.config.gap_max_windows_per_run > 0:
+                        self.last_gap_recovery = run_gap_recovery(self.config, start, end, runner_run_id=run_id)
+                    finish_runner_run(self.config.database_url, run_id, "queued")
+                    next_run = utc_now() + timedelta(seconds=self.config.runner_interval_seconds)
+                    self.next_run_at = format_time(next_run)
+                self._stop.wait(self.config.runner_interval_seconds)
+            except Exception as exc:  # noqa: BLE001 - watchdog should recover scheduler loop failures.
+                self._record_watchdog_event(
+                    "scheduler_loop_error",
+                    severity="critical",
+                    action="scheduler_loop_retry",
+                    details={"error": str(exc)},
+                )
+                self._stop.wait(min(60, self.config.runner_watchdog_interval_seconds))
+
+    def _record_watchdog_event(
+        self,
+        event_type: str,
+        severity: str = "warning",
+        action: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            event = create_runner_watchdog_event(
                 self.config.database_url,
-                "scheduled",
-                "queued",
-                window_start=start,
-                window_end=end,
+                event_type,
+                severity=severity,
+                action=action,
+                details=details or {},
             )
-            job_ids = enqueue_collection_jobs(
-                self.config,
-                "realtime",
-                start,
-                end,
-                runner_run_id=run_id,
-                priority=100,
-            )
-            self.last_result = RunResult(
-                status="queued",
-                started_at=format_time(utc_now()),
-                finished_at=format_time(utc_now()),
-                window_start=format_time(start),
-                window_end=format_time(end),
-                service_ids=None,
-                returncode=None,
-                stdout=json.dumps({"runner_run_id": run_id, "job_ids": job_ids}),
-                stderr="",
-                job_ids=job_ids,
-            )
-            if self.config.gap_recovery_enabled and self.config.gap_max_windows_per_run > 0:
-                self.last_gap_recovery = run_gap_recovery(self.config, start, end, runner_run_id=run_id)
-            finish_runner_run(self.config.database_url, run_id, "queued")
-            next_run = utc_now() + timedelta(seconds=self.config.runner_interval_seconds)
-            self.next_run_at = format_time(next_run)
-            self._stop.wait(self.config.runner_interval_seconds)
+        except Exception as exc:  # noqa: BLE001 - status should still expose in-memory watchdog failures.
+            event = {
+                "event_type": event_type,
+                "severity": severity,
+                "action": action,
+                "details": {**(details or {}), "record_error": str(exc)},
+                "created_at": format_time(utc_now()),
+            }
+        self.last_watchdog_event = event
+
+    def _job_counts(self) -> dict[str, int]:
+        return psql_json(
+            self.config.database_url,
+            """
+select row_to_json(x)
+from (
+  select
+    count(*) filter (where status = 'queued')::int as queued,
+    count(*) filter (where status = 'running')::int as running
+  from collection_jobs
+  where created_at >= now() - interval '24 hours'
+) x;
+""",
+        ) or {"queued": 0, "running": 0}
+
+    def _kick_realtime_collection(self, reason: str, details: dict[str, Any]) -> None:
+        start, end = aligned_window_range(utc_now(), self.config.window_size, self.config.runner_lookback_minutes)
+        window_end = format_time(end)
+        if self._last_watchdog_kick_window_end == window_end:
+            return
+        with self._schedule_lock:
+            self._last_watchdog_kick_window_end = window_end
+            result = self.run_once(start=start, end=end)
+        self._record_watchdog_event(
+            reason,
+            severity="critical",
+            action="queued_realtime_collection",
+            details={
+                **details,
+                "window_start": result.window_start,
+                "window_end": result.window_end,
+                "job_ids": result.job_ids or [],
+            },
+        )
+
+    def _watchdog_loop(self) -> None:
+        while not self._stop.is_set():
+            self.last_watchdog_check_at = format_time(utc_now())
+            try:
+                if not self.config.runner_enabled:
+                    self._stop.wait(self.config.runner_watchdog_interval_seconds)
+                    continue
+
+                if not (self._thread and self._thread.is_alive()):
+                    self._thread = threading.Thread(target=self._loop, name="sre-agent-scheduler", daemon=True)
+                    self._thread.start()
+                    self._record_watchdog_event(
+                        "scheduler_thread_not_running",
+                        severity="critical",
+                        action="scheduler_thread_restarted",
+                    )
+
+                live_worker_count = sum(1 for thread in self._worker_threads if thread.is_alive())
+                if live_worker_count < self.config.worker_concurrency:
+                    self.start_worker()
+                    self._record_watchdog_event(
+                        "worker_count_below_concurrency",
+                        severity="warning",
+                        action="workers_restarted",
+                        details={"live_worker_count": live_worker_count, "target": self.config.worker_concurrency},
+                    )
+
+                stale_job_ids = reset_stale_collection_jobs(
+                    self.config.database_url,
+                    self.config.runner_watchdog_stale_job_seconds,
+                )
+                if stale_job_ids:
+                    self.start_worker()
+                    self._record_watchdog_event(
+                        "stale_running_jobs",
+                        severity="critical",
+                        action="requeued_stale_jobs",
+                        details={"job_ids": stale_job_ids, "stale_seconds": self.config.runner_watchdog_stale_job_seconds},
+                    )
+
+                counts = self._job_counts()
+                queued = int(counts.get("queued") or 0)
+                running = int(counts.get("running") or 0)
+                if self.next_run_at:
+                    next_run_at = parse_time(self.next_run_at)
+                    overdue_seconds = (utc_now() - next_run_at).total_seconds()
+                    if overdue_seconds > self.config.runner_watchdog_schedule_grace_seconds and queued == 0 and running == 0:
+                        self._kick_realtime_collection(
+                            "scheduler_next_run_overdue",
+                            {
+                                "next_run_at": self.next_run_at,
+                                "overdue_seconds": overdue_seconds,
+                                "queued": queued,
+                                "running": running,
+                            },
+                        )
+
+                lag_minutes = data_lag_minutes(self.config.database_url, self.config.window_size)
+                if (
+                    lag_minutes is not None
+                    and lag_minutes > self.config.runner_watchdog_data_lag_minutes
+                    and queued == 0
+                    and running == 0
+                ):
+                    self._kick_realtime_collection(
+                        "metric_window_lag_exceeded",
+                        {
+                            "lag_minutes": lag_minutes,
+                            "threshold_minutes": self.config.runner_watchdog_data_lag_minutes,
+                            "latest_window": latest_metric_window(self.config.database_url, self.config.window_size),
+                        },
+                    )
+            except Exception as exc:  # noqa: BLE001 - watchdog should stay alive.
+                self._record_watchdog_event(
+                    "watchdog_error",
+                    severity="critical",
+                    action="watchdog_continue",
+                    details={"error": str(exc)},
+                )
+            self._stop.wait(self.config.runner_watchdog_interval_seconds)
 
     def _worker_loop(self, worker_name: str) -> None:
         while not self._stop.is_set():

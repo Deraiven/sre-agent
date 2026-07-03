@@ -37,6 +37,20 @@ DRIFT_WARNING_P95_BREACH_RATE = 0.20
 DRIFT_HIGH_P99_BREACH_RATE = 0.10
 DRIFT_CRITICAL_MAD_P95 = 6.0
 
+DEFAULT_ACTIVATION_POLICY = {
+    "min_service_coverage_pct": 95.0,
+    "min_model_coverage_pct": 95.0,
+    "min_avg_training_coverage_pct": 95.0,
+    "max_training_lag_hours": 24.0,
+    "max_no_model_services": 0,
+    "max_stale_services": 0,
+    "max_drift_high_service_pct": 100.0,
+    "max_drift_warning_service_pct": 100.0,
+    "drift_gate_enabled": False,
+    "drift_lookback_hours": 24,
+    "min_quality_score": 90.0,
+}
+
 
 def _sql_text_array(values: list[str] | None) -> str:
     if not values:
@@ -372,28 +386,39 @@ def _model_metric_drift(metric_name: str, values: list[dict[str, Any]], min_samp
 def model_drift_report(
     database_url: str,
     service_ids: list[str] | None = None,
+    model_version: str | None = None,
     lookback_hours: int = 24,
     window_size: str = "15m",
     min_samples: int = 12,
+    active_only: bool = True,
 ) -> dict[str, Any]:
     until = utc_now()
     since = until - timedelta(hours=max(1, min(lookback_hours, 24 * 14)))
     selected_services = service_ids
     if not selected_services:
+        version_filter = f"and model_version = {sql_literal(model_version)}" if model_version else ""
+        active_filter = "and active" if active_only else ""
         sql = """
 select coalesce(json_agg(service_id order by service_id), '[]'::json)
 from (
   select distinct service_id
   from service_metric_models
-  where active
+  where true
+    {active_filter}
+    {version_filter}
 ) s;
-"""
+""".format(active_filter=active_filter, version_filter=version_filter)
         selected_services = psql_json(database_url, sql) or []
 
     service_reports: list[dict[str, Any]] = []
     status_counts: dict[str, int] = {}
     for service_id in selected_services:
-        model_buckets = load_active_model_buckets(database_url, service_id)
+        model_buckets = load_active_model_buckets(
+            database_url,
+            service_id,
+            model_version=model_version,
+            active_only=active_only,
+        )
         rows = load_metric_windows(database_url, service_id=service_id, since=since, until=until, window_size=window_size)
         by_metric: dict[str, list[dict[str, Any]]] = {}
         evaluated_points = 0
@@ -450,6 +475,8 @@ from (
         "until": format_time(until),
         "lookback_hours": lookback_hours,
         "window_size": window_size,
+        "model_version": model_version,
+        "active_only": active_only,
         "min_samples": min_samples,
         "policy": {
             "drift_warning": f"p95 breach rate >= {DRIFT_WARNING_P95_BREACH_RATE:.0%} or MAD p95 >= 4",
@@ -916,6 +943,362 @@ from (
 ) r;
 """
     return psql_json(database_url, sql) or []
+
+
+def _policy_value(policy: dict[str, Any], key: str) -> Any:
+    return policy.get(key, DEFAULT_ACTIVATION_POLICY[key])
+
+
+def _pct(part: int | float, total: int | float) -> float:
+    return float(part) / float(total) * 100.0 if total else 0.0
+
+
+def _status_count(report: dict[str, Any], status: str) -> int:
+    return int((report.get("status_counts") or {}).get(status) or 0)
+
+
+def model_activation_events(
+    database_url: str,
+    model_version: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    where = ["true"]
+    if model_version:
+        where.append(f"model_version = {sql_literal(model_version)}")
+    sql = f"""
+select coalesce(json_agg(row_to_json(e) order by created_at desc), '[]'::json)
+from (
+  select id, model_version, action, status, previous_model_version, policy, decision, created_at
+  from model_activation_events
+  where {' and '.join(where)}
+  order by created_at desc
+  limit {max(1, min(limit, 200))}
+) e;
+"""
+    return psql_json(database_url, sql) or []
+
+
+def record_model_activation_event(
+    database_url: str,
+    model_version: str,
+    action: str,
+    status: str,
+    previous_model_version: str | None,
+    policy: dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    sql = """
+insert into model_activation_events (
+  model_version, action, status, previous_model_version, policy, decision
+) values (
+  {model_version}, {action}, {status}, {previous_model_version}, {policy}::jsonb, {decision}::jsonb
+) returning row_to_json(model_activation_events);
+""".format(
+        model_version=sql_literal(model_version),
+        action=sql_literal(action),
+        status=sql_literal(status),
+        previous_model_version=sql_literal(previous_model_version),
+        policy=sql_literal(policy),
+        decision=sql_literal(decision),
+    )
+    return psql_json(database_url, sql)
+
+
+def active_model_versions(database_url: str) -> list[dict[str, Any]]:
+    sql = """
+select coalesce(json_agg(row_to_json(v) order by latest_activated_at desc nulls last), '[]'::json)
+from (
+  select model_version,
+         count(*)::int as model_count,
+         count(distinct service_id)::int as service_count,
+         max(activated_at) as latest_activated_at,
+         max(training_window_end) as training_window_end
+  from service_metric_models
+  where active
+  group by model_version
+) v;
+"""
+    return psql_json(database_url, sql) or []
+
+
+def model_activation_evaluation(
+    database_url: str,
+    model_version: str,
+    policy: dict[str, Any] | None = None,
+    window_size: str = "15m",
+) -> dict[str, Any]:
+    policy = {**DEFAULT_ACTIVATION_POLICY, **(policy or {})}
+    drift_lookback_hours = int(_policy_value(policy, "drift_lookback_hours"))
+    sql = f"""
+with service_scope as (
+  select count(*)::int as expected_services from services
+),
+model_scope as (
+  select service_id,
+         metric_name,
+         training_window_end,
+         coalesce((quality_summary->>'coverage_pct')::double precision, 0) as coverage_pct
+  from service_metric_models
+  where model_version = {sql_literal(model_version)}
+),
+latest_windows as (
+  select service_id, max(window_end) as latest_metric_window
+  from service_metric_windows
+  where window_size = {sql_literal(window_size)}
+  group by service_id
+),
+lag as (
+  select m.service_id,
+         max(greatest(0, extract(epoch from (lw.latest_metric_window - m.training_window_end)) / 3600.0)) as max_lag_hours
+  from model_scope m
+  left join latest_windows lw on lw.service_id = m.service_id
+  group by m.service_id
+)
+select row_to_json(x)
+from (
+  select
+    (select expected_services from service_scope) as expected_services,
+    count(*)::int as model_count,
+    count(distinct m.service_id)::int as modeled_services,
+    count(distinct m.metric_name)::int as modeled_metrics,
+    min(m.coverage_pct) as min_training_coverage_pct,
+    avg(m.coverage_pct) as avg_training_coverage_pct,
+    max(m.training_window_end) as training_window_end,
+    coalesce(max(l.max_lag_hours), 999999) as max_model_lag_hours
+  from model_scope m
+  left join lag l on l.service_id = m.service_id
+) x;
+"""
+    inventory = psql_json(database_url, sql) or {}
+    expected_services = int(inventory.get("expected_services") or 0)
+    modeled_services = int(inventory.get("modeled_services") or 0)
+    modeled_metrics = int(inventory.get("modeled_metrics") or 0)
+    service_coverage_pct = _pct(modeled_services, expected_services)
+    model_count = int(inventory.get("model_count") or 0)
+    model_coverage_pct = _pct(model_count, max(expected_services, 1) * max(modeled_metrics, 1))
+    avg_training_coverage_pct = float(inventory.get("avg_training_coverage_pct") or 0)
+    min_training_coverage_pct = float(inventory.get("min_training_coverage_pct") or 0)
+    max_model_lag_hours = float(inventory.get("max_model_lag_hours") or 999999)
+
+    freshness_report = model_freshness_report(
+        database_url,
+        model_version=model_version,
+        window_size=window_size,
+        warning_hours=int(_policy_value(policy, "max_training_lag_hours")),
+        critical_hours=int(_policy_value(policy, "max_training_lag_hours")) * 2,
+    )
+    drift_report = model_drift_report(
+        database_url,
+        model_version=model_version,
+        lookback_hours=drift_lookback_hours,
+        window_size=window_size,
+        active_only=False,
+    )
+    no_model_services = expected_services - modeled_services
+    stale_services = _status_count(freshness_report, "stale_warning") + _status_count(
+        freshness_report, "stale_critical"
+    )
+    drift_high = _status_count(drift_report, "drift_high")
+    drift_warning = _status_count(drift_report, "drift_warning")
+    drift_service_count = int(drift_report.get("service_count") or 0)
+    drift_high_pct = _pct(drift_high, drift_service_count)
+    drift_warning_pct = _pct(drift_warning, drift_service_count)
+
+    gates = [
+        {
+            "name": "service_coverage",
+            "passed": service_coverage_pct >= float(_policy_value(policy, "min_service_coverage_pct")),
+            "actual": service_coverage_pct,
+            "expected": _policy_value(policy, "min_service_coverage_pct"),
+        },
+        {
+            "name": "model_coverage",
+            "passed": model_coverage_pct >= float(_policy_value(policy, "min_model_coverage_pct")),
+            "actual": model_coverage_pct,
+            "expected": _policy_value(policy, "min_model_coverage_pct"),
+        },
+        {
+            "name": "avg_training_coverage",
+            "passed": avg_training_coverage_pct >= float(_policy_value(policy, "min_avg_training_coverage_pct")),
+            "actual": avg_training_coverage_pct,
+            "expected": _policy_value(policy, "min_avg_training_coverage_pct"),
+        },
+        {
+            "name": "freshness",
+            "passed": max_model_lag_hours <= float(_policy_value(policy, "max_training_lag_hours")),
+            "actual": max_model_lag_hours,
+            "expected": _policy_value(policy, "max_training_lag_hours"),
+        },
+        {
+            "name": "no_model_services",
+            "passed": no_model_services <= int(_policy_value(policy, "max_no_model_services")),
+            "actual": no_model_services,
+            "expected": _policy_value(policy, "max_no_model_services"),
+        },
+        {
+            "name": "stale_services",
+            "passed": stale_services <= int(_policy_value(policy, "max_stale_services")),
+            "actual": stale_services,
+            "expected": _policy_value(policy, "max_stale_services"),
+        },
+    ]
+    if bool(_policy_value(policy, "drift_gate_enabled")):
+        gates.extend(
+            [
+                {
+                    "name": "drift_high",
+                    "passed": drift_high_pct <= float(_policy_value(policy, "max_drift_high_service_pct")),
+                    "actual": drift_high_pct,
+                    "expected": _policy_value(policy, "max_drift_high_service_pct"),
+                },
+                {
+                    "name": "drift_warning",
+                    "passed": drift_warning_pct <= float(_policy_value(policy, "max_drift_warning_service_pct")),
+                    "actual": drift_warning_pct,
+                    "expected": _policy_value(policy, "max_drift_warning_service_pct"),
+                },
+            ]
+        )
+
+    quality_components = {
+        "service_coverage": min(service_coverage_pct, 100) * 0.30,
+        "model_coverage": min(model_coverage_pct, 100) * 0.25,
+        "avg_training_coverage": min(avg_training_coverage_pct, 100) * 0.25,
+        "freshness": max(0.0, 100.0 - min(max_model_lag_hours, 100.0)) * 0.10,
+        "drift": (
+            max(0.0, 100.0 - drift_high_pct) * 0.10
+            if bool(_policy_value(policy, "drift_gate_enabled"))
+            else 10.0
+        ),
+    }
+    quality_score = round(sum(quality_components.values()), 2)
+    gates.append(
+        {
+            "name": "quality_score",
+            "passed": quality_score >= float(_policy_value(policy, "min_quality_score")),
+            "actual": quality_score,
+            "expected": _policy_value(policy, "min_quality_score"),
+        }
+    )
+    eligible = bool(model_count) and all(gate["passed"] for gate in gates)
+    return {
+        "model_version": model_version,
+        "status": "eligible" if eligible else "blocked",
+        "eligible": eligible,
+        "policy": policy,
+        "inventory": {
+            **inventory,
+            "service_coverage_pct": service_coverage_pct,
+            "model_coverage_pct": model_coverage_pct,
+            "no_model_services": no_model_services,
+        },
+        "quality_score": quality_score,
+        "quality_components": quality_components,
+        "gates": gates,
+        "freshness_status_counts": freshness_report.get("status_counts") or {},
+        "drift_status_counts": drift_report.get("status_counts") or {},
+        "drift_high_pct": drift_high_pct,
+        "drift_warning_pct": drift_warning_pct,
+    }
+
+
+def activate_model_version(
+    database_url: str,
+    model_version: str,
+    policy: dict[str, Any] | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    decision = model_activation_evaluation(database_url, model_version, policy=policy)
+    previous_versions = active_model_versions(database_url)
+    previous_model_version = previous_versions[0]["model_version"] if previous_versions else None
+    if not decision["eligible"] and not force:
+        event = record_model_activation_event(
+            database_url, model_version, "activate", "blocked", previous_model_version, decision["policy"], decision
+        )
+        return {"status": "blocked", "event": event, "decision": decision}
+    psql_exec(
+        database_url,
+        """
+begin;
+update service_metric_models
+set active = false,
+    status = case when status = 'active' then 'evaluated' else status end
+where active
+  and model_version <> {model_version};
+update service_metric_models
+set active = true,
+    status = 'active',
+    activated_at = now()
+where model_version = {model_version};
+commit;
+""".format(model_version=sql_literal(model_version)),
+    )
+    decision["forced"] = force
+    event = record_model_activation_event(
+        database_url, model_version, "activate", "activated", previous_model_version, decision["policy"], decision
+    )
+    return {"status": "activated", "event": event, "decision": decision}
+
+
+def rollback_model_version(
+    database_url: str,
+    target_model_version: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    current_versions = active_model_versions(database_url)
+    current_model_version = current_versions[0]["model_version"] if current_versions else None
+    if not target_model_version:
+        events = model_activation_events(database_url, limit=20)
+        for event in events:
+            previous = event.get("previous_model_version")
+            if event.get("action") == "activate" and event.get("status") == "activated" and previous:
+                target_model_version = previous
+                break
+    if not target_model_version:
+        raise ValueError("target_model_version is required when no previous activation event exists")
+    exists_sql = f"""
+select row_to_json(x)
+from (
+  select count(*)::int as model_count, count(distinct service_id)::int as service_count
+  from service_metric_models
+  where model_version = {sql_literal(target_model_version)}
+) x;
+"""
+    target = psql_json(database_url, exists_sql) or {}
+    if not target.get("model_count"):
+        raise ValueError(f"target_model_version {target_model_version} has no persisted models")
+    psql_exec(
+        database_url,
+        """
+begin;
+update service_metric_models
+set active = false,
+    status = case when status = 'active' then 'evaluated' else status end
+where active;
+update service_metric_models
+set active = true,
+    status = 'active',
+    activated_at = now()
+where model_version = {target_model_version};
+commit;
+""".format(target_model_version=sql_literal(target_model_version)),
+    )
+    decision = {
+        "target_model_version": target_model_version,
+        "current_model_version": current_model_version,
+        "reason": reason,
+        "target": target,
+    }
+    event = record_model_activation_event(
+        database_url,
+        target_model_version,
+        "rollback",
+        "rolled_back",
+        current_model_version,
+        DEFAULT_ACTIVATION_POLICY,
+        decision,
+    )
+    return {"status": "rolled_back", "event": event, "decision": decision}
 
 
 def add_risk_feedback_label(database_url: str, payload: dict[str, Any]) -> dict[str, Any]:

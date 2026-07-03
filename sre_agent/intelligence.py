@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -57,6 +58,7 @@ MODEL_BASELINE_SCOPE_WEIGHTS = {
     "global": 0.30,
 }
 KUBERNETES_OK_STATUSES = ("collected", "events_only", "partial", "missing")
+RISK_CALIBRATION_VERSION = "feedback-calibration-v1"
 
 
 def utc_now() -> datetime:
@@ -403,7 +405,11 @@ def metric_baseline_comparison(metric_name: str, value: float, baseline: dict[st
     }
 
 
-def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str, Any]:
+def evaluate_window(
+    row: dict[str, Any],
+    baselines: dict[str, dict],
+    calibration_rules: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     window_start = parse_time(row["window_start"])
     metrics = extract_metrics(row)
     evidence: list[dict[str, Any]] = []
@@ -419,7 +425,16 @@ def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str
                 severity_points = 35 if value < 0.8 else 20
                 score += severity_points
                 anomaly_types.add("kubernetes_availability")
-                evidence.append({"metric": metric_name, "value": value, "expected": 1.0, "points": severity_points})
+                evidence_item = {
+                    "source": "rule_baseline",
+                    "metric": metric_name,
+                    "value": value,
+                    "expected": 1.0,
+                    "points": severity_points,
+                }
+                evidence_item = apply_risk_calibration(evidence_item, calibration_rules or [])
+                evidence.append(evidence_item)
+                score += evidence_item["points"] - severity_points
             continue
         comparisons = [metric_baseline_comparison(metric_name, value, baseline) for baseline in candidates]
         selected = max(comparisons, key=lambda item: item["weighted_points"])
@@ -435,39 +450,56 @@ def evaluate_window(row: dict[str, Any], baselines: dict[str, dict]) -> dict[str
         elif metric_name.startswith("kubernetes."):
             anomaly_types.add("kubernetes_health")
             points += 8
-        evidence.append(
-            {
-                "metric": metric_name,
-                "value": value,
-                "baseline_p50": selected["baseline_p50"],
-                "baseline_p95": selected["baseline_p95"],
-                "baseline_p99": selected["baseline_p99"],
-                "baseline_scope": selected["baseline_scope"],
-                "baseline_weight": selected["baseline_weight"],
-                "baseline_sample_count": selected["baseline_sample_count"],
-                "baseline_minute_slot": selected["baseline_minute_slot"],
-                "baseline_reference_value": selected["baseline_reference_value"],
-                "deviation_ratio": selected["deviation_ratio"],
-                "deviation_type": selected["deviation_type"],
-                "raw_points": selected["raw_points"],
-                "points": points,
-                "baseline_comparisons": comparisons,
-            }
-        )
-        score += points
+        evidence_item = {
+            "source": "rule_baseline",
+            "metric": metric_name,
+            "value": value,
+            "baseline_p50": selected["baseline_p50"],
+            "baseline_p95": selected["baseline_p95"],
+            "baseline_p99": selected["baseline_p99"],
+            "baseline_scope": selected["baseline_scope"],
+            "baseline_weight": selected["baseline_weight"],
+            "baseline_sample_count": selected["baseline_sample_count"],
+            "baseline_minute_slot": selected["baseline_minute_slot"],
+            "baseline_reference_value": selected["baseline_reference_value"],
+            "deviation_ratio": selected["deviation_ratio"],
+            "deviation_type": selected["deviation_type"],
+            "raw_points": selected["raw_points"],
+            "points": points,
+            "baseline_comparisons": comparisons,
+        }
+        evidence_item = apply_risk_calibration(evidence_item, calibration_rules or [])
+        evidence.append(evidence_item)
+        score += evidence_item["points"]
 
     k8s = row.get("kubernetes") or {}
     replicas = k8s.get("replicas") if isinstance(k8s.get("replicas"), dict) else {}
     if replicas and replicas.get("rollout_complete") is False:
         score += 25
         anomaly_types.add("rollout")
-        evidence.append({"metric": "kubernetes.rollout_complete", "value": False, "points": 25})
+        evidence_item = {
+            "source": "rule_baseline",
+            "metric": "kubernetes.rollout_complete",
+            "value": False,
+            "points": 25,
+        }
+        evidence_item = apply_risk_calibration(evidence_item, calibration_rules or [])
+        evidence.append(evidence_item)
+        score += evidence_item["points"] - 25
     waiting_reasons = k8s.get("waiting_reasons") if isinstance(k8s.get("waiting_reasons"), dict) else {}
     for reason, count in waiting_reasons.items():
         if count:
             score += 30
             anomaly_types.add("kubernetes_waiting")
-            evidence.append({"metric": f"kubernetes.waiting_reasons.{reason}", "value": count, "points": 30})
+            evidence_item = {
+                "source": "rule_baseline",
+                "metric": f"kubernetes.waiting_reasons.{reason}",
+                "value": count,
+                "points": 30,
+            }
+            evidence_item = apply_risk_calibration(evidence_item, calibration_rules or [])
+            evidence.append(evidence_item)
+            score += evidence_item["points"] - 30
 
     data_quality = row.get("data_quality") or {}
     errors = data_quality.get("errors") if isinstance(data_quality.get("errors"), list) else []
@@ -692,7 +724,14 @@ from (
     }
 
 
-def load_active_model_buckets(database_url: str, service_id: str) -> dict[str, dict[str, dict[str, Any]]]:
+def load_active_model_buckets(
+    database_url: str,
+    service_id: str,
+    model_version: str | None = None,
+    active_only: bool = True,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    model_version_filter = f"and m.model_version = {sql_literal(model_version)}" if model_version else ""
+    active_filter = "and m.active" if active_only else ""
     sql = f"""
 select coalesce(json_agg(row_to_json(b) order by b.metric_name, b.baseline_scope), '[]'::json)
 from (
@@ -720,7 +759,8 @@ from (
   from service_metric_models m
   join service_metric_model_buckets b on b.model_id = m.id
   where m.service_id = {sql_literal(service_id)}
-    and m.active
+    {active_filter}
+    {model_version_filter}
 ) b;
 """
     rows = psql_json(database_url, sql) or []
@@ -857,7 +897,326 @@ def metric_model_residual_comparison(metric_name: str, value: float, bucket: dic
     }
 
 
-def evaluate_window_dynamic_model(row: dict[str, Any], model_buckets: dict[str, dict[str, dict[str, Any]]]) -> dict[str, Any]:
+def _rule_applies(rule: dict[str, Any], evidence: dict[str, Any]) -> bool:
+    metric_name = rule.get("metric_name")
+    evidence_source = rule.get("evidence_source")
+    if metric_name and metric_name != evidence.get("metric"):
+        return False
+    if evidence_source and evidence_source != evidence.get("source"):
+        return False
+    return True
+
+
+def apply_risk_calibration(evidence: dict[str, Any], rules: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rules or not evidence.get("points"):
+        return evidence
+    original_points = int(evidence["points"])
+    calibrated_points = float(original_points)
+    applied: list[dict[str, Any]] = []
+    for rule in rules:
+        if not _rule_applies(rule, evidence):
+            continue
+        multiplier = float(rule.get("weight_multiplier") or 1.0)
+        delta = float(rule.get("points_delta") or 0.0)
+        calibrated_points = calibrated_points * multiplier + delta
+        applied.append(
+            {
+                "rule_id": rule.get("id"),
+                "metric_name": rule.get("metric_name"),
+                "evidence_source": rule.get("evidence_source"),
+                "weight_multiplier": multiplier,
+                "points_delta": delta,
+                "reason": rule.get("reason"),
+            }
+        )
+    if not applied:
+        return evidence
+    new_points = max(0, min(100, round(calibrated_points)))
+    return {
+        **evidence,
+        "points": new_points,
+        "raw_points_before_calibration": original_points,
+        "calibration_adjustment": new_points - original_points,
+        "calibration_rules": applied,
+    }
+
+
+def load_risk_calibration_rules(
+    database_url: str,
+    service_id: str,
+    risk_version: str = "risk-v2",
+    model_version: str | None = None,
+) -> list[dict[str, Any]]:
+    model_filter = ""
+    if model_version:
+        model_filter = f"and (model_version is null or model_version = {sql_literal(model_version)})"
+    sql = f"""
+select coalesce(json_agg(row_to_json(r) order by specificity desc, created_at desc), '[]'::json)
+from (
+  select id, service_id, metric_name, evidence_source, risk_version, model_version,
+         weight_multiplier::float as weight_multiplier,
+         points_delta::float as points_delta,
+         enabled, generated_by, reason, stats, created_at,
+         ((case when metric_name is null then 0 else 1 end) +
+          (case when evidence_source is null then 0 else 1 end)) as specificity
+  from risk_calibration_rules
+  where enabled
+    and service_id = {sql_literal(service_id)}
+    and risk_version = {sql_literal(risk_version)}
+    {model_filter}
+) r;
+"""
+    try:
+        return psql_json(database_url, sql) or []
+    except subprocess.CalledProcessError:
+        return []
+
+
+def _feedback_evidence_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = payload.get("top_evidence") or payload.get("evidence") or []
+    if not isinstance(candidates, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in candidates:
+        if isinstance(item, dict):
+            items.append(
+                {
+                    "metric_name": item.get("metric"),
+                    "evidence_source": item.get("source"),
+                    "evidence_type": item.get("deviation_type") or item.get("type"),
+                }
+            )
+    return items
+
+
+def list_risk_feedback_labels(
+    database_url: str,
+    service_id: str | None = None,
+    label_type: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    where = ["true"]
+    if service_id:
+        where.append(f"service_id = {sql_literal(service_id)}")
+    if label_type:
+        where.append(f"label_type = {sql_literal(label_type)}")
+    sql = f"""
+select coalesce(json_agg(row_to_json(f) order by created_at desc), '[]'::json)
+from (
+  select id, service_id, window_start, window_end, risk_version, model_version,
+         label_type, actual_severity, false_positive, false_negative, payload,
+         created_at
+  from risk_feedback_labels
+  where {' and '.join(where)}
+  order by created_at desc
+  limit {max(1, min(limit, 5000))}
+) f;
+"""
+    return psql_json(database_url, sql) or []
+
+
+def risk_feedback_report(database_url: str, service_id: str | None = None, days: int = 30) -> dict[str, Any]:
+    service_filter = f"and service_id = {sql_literal(service_id)}" if service_id else ""
+    sql = f"""
+select coalesce(json_agg(row_to_json(r) order by r.service_id), '[]'::json)
+from (
+  select service_id,
+         count(*)::int as total_labels,
+         count(*) filter (where label_type = 'confirmed_incident')::int as confirmed_incident_count,
+         count(*) filter (where label_type = 'false_positive' or false_positive)::int as false_positive_count,
+         count(*) filter (where label_type = 'false_negative' or false_negative)::int as false_negative_count,
+         min(created_at) as first_label_at,
+         max(created_at) as last_label_at
+  from risk_feedback_labels
+  where created_at >= now() - interval '{max(1, min(days, 365))} days'
+    {service_filter}
+  group by service_id
+) r;
+"""
+    services = psql_json(database_url, sql) or []
+    totals = {
+        "total_labels": sum(item["total_labels"] for item in services),
+        "confirmed_incident_count": sum(item["confirmed_incident_count"] for item in services),
+        "false_positive_count": sum(item["false_positive_count"] for item in services),
+        "false_negative_count": sum(item["false_negative_count"] for item in services),
+    }
+    return {
+        "days": days,
+        "service_id": service_id,
+        **totals,
+        "services": services,
+    }
+
+
+def list_risk_calibration_rules(
+    database_url: str,
+    service_id: str | None = None,
+    enabled: bool | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    where = ["true"]
+    if service_id:
+        where.append(f"service_id = {sql_literal(service_id)}")
+    if enabled is not None:
+        where.append(f"enabled = {sql_literal(enabled)}")
+    sql = f"""
+select coalesce(json_agg(row_to_json(r) order by created_at desc), '[]'::json)
+from (
+  select id, service_id, metric_name, evidence_source, risk_version, model_version,
+         weight_multiplier::float as weight_multiplier,
+         points_delta::float as points_delta,
+         enabled, generated_by, reason, stats, created_at
+  from risk_calibration_rules
+  where {' and '.join(where)}
+  order by created_at desc
+  limit {max(1, min(limit, 500))}
+) r;
+"""
+    return psql_json(database_url, sql) or []
+
+
+def _calibration_values(stats: dict[str, int]) -> tuple[float, float, str]:
+    false_positives = stats.get("false_positive_count", 0)
+    false_negatives = stats.get("false_negative_count", 0)
+    confirmed = stats.get("confirmed_incident_count", 0)
+    total = max(1, stats.get("total_labels", 0))
+    if false_positives > (false_negatives + confirmed):
+        ratio = false_positives / total
+        multiplier = max(0.65, 1.0 - min(0.35, ratio * 0.30))
+        delta = -3.0 if false_positives >= 2 else -1.0
+        return multiplier, delta, "false positives dominate recent feedback; dampen matching risk evidence"
+    if false_negatives:
+        ratio = false_negatives / total
+        multiplier = min(1.50, 1.0 + min(0.40, ratio * 0.45))
+        delta = 5.0 if false_negatives >= 2 else 2.0
+        return multiplier, delta, "false negatives observed; amplify matching risk evidence"
+    if confirmed:
+        ratio = confirmed / total
+        multiplier = min(1.30, 1.0 + min(0.20, ratio * 0.25))
+        return multiplier, 1.0, "confirmed incidents validate this risk evidence"
+    return 1.0, 0.0, "insufficient directional feedback"
+
+
+def generate_risk_calibration_rules(
+    database_url: str,
+    service_id: str | None = None,
+    days: int = 30,
+    min_labels: int = 2,
+    activate: bool = True,
+    risk_version: str = "risk-v2",
+    model_version: str | None = None,
+) -> dict[str, Any]:
+    labels = list_risk_feedback_labels(database_url, service_id=service_id, limit=5000)
+    cutoff = utc_now() - timedelta(days=max(1, min(days, 365)))
+    groups: dict[tuple[str, str | None, str | None], dict[str, Any]] = {}
+    for label in labels:
+        created_at = parse_time(label["created_at"])
+        if created_at < cutoff:
+            continue
+        label_service_id = label["service_id"]
+        payload = label.get("payload") or {}
+        evidence_items = _feedback_evidence_items(payload)
+        if not evidence_items:
+            evidence_items = [{"metric_name": None, "evidence_source": None}]
+        for item in evidence_items:
+            key = (label_service_id, item.get("metric_name"), item.get("evidence_source"))
+            stats = groups.setdefault(
+                key,
+                {
+                    "service_id": label_service_id,
+                    "metric_name": item.get("metric_name"),
+                    "evidence_source": item.get("evidence_source"),
+                    "total_labels": 0,
+                    "confirmed_incident_count": 0,
+                    "false_positive_count": 0,
+                    "false_negative_count": 0,
+                    "label_ids": [],
+                },
+            )
+            stats["total_labels"] += 1
+            stats["label_ids"].append(label["id"])
+            if label.get("label_type") == "confirmed_incident":
+                stats["confirmed_incident_count"] += 1
+            if label.get("label_type") == "false_positive" or label.get("false_positive"):
+                stats["false_positive_count"] += 1
+            if label.get("label_type") == "false_negative" or label.get("false_negative"):
+                stats["false_negative_count"] += 1
+
+    selected = [stats for stats in groups.values() if stats["total_labels"] >= max(1, min_labels)]
+    statements = ["begin;"]
+    filter_sql = f"service_id = {sql_literal(service_id)}" if service_id else "true"
+    statements.append(
+        f"""
+update risk_calibration_rules
+set enabled = false
+where generated_by = {sql_literal(RISK_CALIBRATION_VERSION)}
+  and risk_version = {sql_literal(risk_version)}
+  and {filter_sql};
+"""
+    )
+    created_rules: list[dict[str, Any]] = []
+    for stats in selected:
+        multiplier, delta, reason = _calibration_values(stats)
+        if multiplier == 1.0 and delta == 0.0:
+            continue
+        created_rules.append(
+            {
+                "service_id": stats["service_id"],
+                "metric_name": stats["metric_name"],
+                "evidence_source": stats["evidence_source"],
+                "risk_version": risk_version,
+                "model_version": model_version,
+                "weight_multiplier": multiplier,
+                "points_delta": delta,
+                "enabled": activate,
+                "generated_by": RISK_CALIBRATION_VERSION,
+                "reason": reason,
+                "stats": stats,
+            }
+        )
+        statements.append(
+            """
+insert into risk_calibration_rules (
+  service_id, metric_name, evidence_source, risk_version, model_version,
+  weight_multiplier, points_delta, enabled, generated_by, reason, stats
+) values (
+  {service_id}, {metric_name}, {evidence_source}, {risk_version}, {model_version},
+  {weight_multiplier}, {points_delta}, {enabled}, {generated_by}, {reason}, {stats}::jsonb
+);
+""".format(
+                service_id=sql_literal(stats["service_id"]),
+                metric_name=sql_literal(stats["metric_name"]),
+                evidence_source=sql_literal(stats["evidence_source"]),
+                risk_version=sql_literal(risk_version),
+                model_version=sql_literal(model_version),
+                weight_multiplier=sql_literal(multiplier),
+                points_delta=sql_literal(delta),
+                enabled=sql_literal(activate),
+                generated_by=sql_literal(RISK_CALIBRATION_VERSION),
+                reason=sql_literal(reason),
+                stats=sql_literal(stats),
+            )
+        )
+    statements.append("commit;")
+    psql_exec(database_url, "\n".join(statements))
+    return {
+        "status": "succeeded",
+        "days": days,
+        "min_labels": min_labels,
+        "activate": activate,
+        "risk_version": risk_version,
+        "model_version": model_version,
+        "eligible_groups": len(selected),
+        "created_rule_count": len(created_rules),
+        "created_rules": created_rules,
+    }
+
+
+def evaluate_window_dynamic_model(
+    row: dict[str, Any],
+    model_buckets: dict[str, dict[str, dict[str, Any]]],
+    calibration_rules: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     window_start = parse_time(row["window_start"])
     metrics = extract_metrics(row)
     evidence: list[dict[str, Any]] = []
@@ -874,35 +1233,35 @@ def evaluate_window_dynamic_model(row: dict[str, Any], model_buckets: dict[str, 
         points = selected["weighted_points"]
         if points <= 0:
             continue
-        evidence.append(
-            {
-                "source": "ml_dynamic_baseline",
-                "metric": metric_name,
-                "value": value,
-                "points": points,
-                "model_version": selected["model_version"],
-                "model_type": selected["model_type"],
-                "baseline_scope": selected["baseline_scope"],
-                "baseline_weight": selected["baseline_weight"],
-                "baseline_sample_count": selected["sample_count"],
-                "coverage_pct": selected["coverage_pct"],
-                "confidence": selected["confidence"],
-                "model_p50": selected["p50"],
-                "model_p95": selected["p95"],
-                "model_p99": selected["p99"],
-                "median": selected["median"],
-                "mad": selected["mad"],
-                "residual": selected["residual"],
-                "residual_ratio": selected["residual_ratio"],
-                "p95_deviation": selected["p95_deviation"],
-                "p99_deviation": selected["p99_deviation"],
-                "robust_mad_score": selected["robust_mad_score"],
-                "deviation_type": selected["deviation_type"],
-                "raw_points": selected["raw_points"],
-                "model_comparisons": comparisons,
-            }
-        )
-        score += points
+        evidence_item = {
+            "source": "ml_dynamic_baseline",
+            "metric": metric_name,
+            "value": value,
+            "points": points,
+            "model_version": selected["model_version"],
+            "model_type": selected["model_type"],
+            "baseline_scope": selected["baseline_scope"],
+            "baseline_weight": selected["baseline_weight"],
+            "baseline_sample_count": selected["sample_count"],
+            "coverage_pct": selected["coverage_pct"],
+            "confidence": selected["confidence"],
+            "model_p50": selected["p50"],
+            "model_p95": selected["p95"],
+            "model_p99": selected["p99"],
+            "median": selected["median"],
+            "mad": selected["mad"],
+            "residual": selected["residual"],
+            "residual_ratio": selected["residual_ratio"],
+            "p95_deviation": selected["p95_deviation"],
+            "p99_deviation": selected["p99_deviation"],
+            "robust_mad_score": selected["robust_mad_score"],
+            "deviation_type": selected["deviation_type"],
+            "raw_points": selected["raw_points"],
+            "model_comparisons": comparisons,
+        }
+        evidence_item = apply_risk_calibration(evidence_item, calibration_rules or [])
+        evidence.append(evidence_item)
+        score += evidence_item["points"]
 
     top_points = [item["points"] for item in sorted(evidence, key=lambda item: item["points"], reverse=True)[:3]]
     return {
@@ -930,10 +1289,21 @@ def score_service_risk(
     baselines = load_baseline_map(database_url, service_id, baseline_version)
     model_buckets = load_active_model_buckets(database_url, service_id)
     dynamic_model_status = load_dynamic_model_status(database_url, service_id)
+    active_model_version = dynamic_model_status.get("model_version")
+    calibration_rules = load_risk_calibration_rules(
+        database_url,
+        service_id,
+        risk_version=risk_version,
+        model_version=active_model_version,
+    )
     rows = load_metric_windows(database_url, service_id=service_id, since=since, until=until)
-    evaluations = [evaluate_window(row, baselines) for row in rows]
+    evaluations = [evaluate_window(row, baselines, calibration_rules=calibration_rules) for row in rows]
     base_score, _ = risk_from_scores([item["score"] for item in evaluations])
-    model_evaluations = [evaluate_window_dynamic_model(row, model_buckets) for row in rows] if model_buckets else []
+    model_evaluations = (
+        [evaluate_window_dynamic_model(row, model_buckets, calibration_rules=calibration_rules) for row in rows]
+        if model_buckets
+        else []
+    )
     model_score, _ = risk_from_scores([item["score"] for item in model_evaluations])
     top_evidence: list[dict[str, Any]] = []
     for item in sorted(evaluations, key=lambda row: row["score"], reverse=True):
@@ -963,6 +1333,7 @@ def score_service_risk(
         "active_model_count": dynamic_model_status.get("active_model_count") or 0,
         "evaluated_window_count": len(model_evaluations),
         "evaluated_metric_count": sum(item["evaluated_metric_count"] for item in model_evaluations),
+        "calibration_rule_count": len(calibration_rules),
         "evidence": dynamic_model_evidence,
     }
     if model_score:
@@ -987,7 +1358,84 @@ def score_service_risk(
         "transaction_baseline_risk": transaction_risk,
         "dynamic_baseline_model": dynamic_model_status,
         "dynamic_baseline_risk": dynamic_baseline_risk,
+        "risk_calibration": {
+            "status": "active" if calibration_rules else "no_rules",
+            "rule_count": len(calibration_rules),
+            "rules": calibration_rules,
+        },
         "top_evidence": top_evidence,
+    }
+
+
+def risk_feedback_candidates(
+    database_url: str,
+    service_ids: list[str] | None = None,
+    lookback_hours: int = 6,
+    min_score: int = 50,
+    limit: int = 20,
+    baseline_version: str = BASELINE_VERSION,
+) -> dict[str, Any]:
+    selected_services = service_ids or list_service_ids(database_url)
+    candidates: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for service_id in selected_services:
+        try:
+            risk = score_service_risk(
+                database_url,
+                service_id,
+                lookback_hours=lookback_hours,
+                baseline_version=baseline_version,
+            )
+        except Exception as exc:  # noqa: BLE001 - candidate generation should keep scanning services.
+            errors.append({"service_id": service_id, "error": str(exc)})
+            continue
+        if risk["risk_score"] < min_score:
+            continue
+        evidence = [
+            {
+                "source": item.get("source"),
+                "metric": item.get("metric"),
+                "points": item.get("points"),
+                "deviation_type": item.get("deviation_type"),
+                "window_start": item.get("window_start"),
+            }
+            for item in risk.get("top_evidence", [])[:5]
+        ]
+        candidates.append(
+            {
+                "service_id": service_id,
+                "risk_score": risk["risk_score"],
+                "risk_level": risk["risk_level"],
+                "risk_version": risk["risk_version"],
+                "model_version": (risk.get("dynamic_baseline_model") or {}).get("model_version"),
+                "since": risk["since"],
+                "until": risk["until"],
+                "top_evidence": evidence,
+                "feedback_payload_template": {
+                    "service_id": service_id,
+                    "window_start": risk["since"],
+                    "window_end": risk["until"],
+                    "risk_version": risk["risk_version"],
+                    "model_version": (risk.get("dynamic_baseline_model") or {}).get("model_version"),
+                    "label_type": "false_positive | false_negative | confirmed_incident",
+                    "actual_severity": "normal | low | medium | high | critical",
+                    "payload": {
+                        "review_status": "needs_human_review",
+                        "risk_score": risk["risk_score"],
+                        "risk_level": risk["risk_level"],
+                        "top_evidence": evidence,
+                    },
+                },
+            }
+        )
+    candidates = sorted(candidates, key=lambda item: item["risk_score"], reverse=True)
+    return {
+        "lookback_hours": lookback_hours,
+        "min_score": min_score,
+        "candidate_count": len(candidates),
+        "returned_count": min(len(candidates), max(1, limit)),
+        "candidates": candidates[: max(1, min(limit, 200))],
+        "errors": errors,
     }
 
 

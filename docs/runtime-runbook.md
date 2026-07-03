@@ -78,6 +78,11 @@ starts a fresh process. On restart, the service returns interrupted
 ## Runner Behavior
 
 The runner starts automatically when `SRE_AGENT_RUNNER_ENABLED=true`.
+The runner also starts an internal watchdog by default. It checks that the
+scheduler thread is alive, workers match the configured concurrency, queued or
+running jobs are draining, and latest metric windows are not falling behind.
+Recovery events are written to `runner_watchdog_events` and exposed from
+`/runner/status.recent_watchdog_events`.
 
 Each run:
 
@@ -111,6 +116,11 @@ Default settings:
 | `SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN` | `8` | Recover at most this many 15m windows per runner cycle |
 | `SRE_AGENT_GAP_SERVICE_CHUNK_SIZE` | `20` | Number of services collected by one gap recovery job |
 | `SRE_AGENT_GAP_RECOVERY_ORDER` | `newest` | Recover recent gaps first inside the runner-owned window |
+| `SRE_AGENT_RUNNER_WATCHDOG_ENABLED` | `true` | Enable internal runner self-healing |
+| `SRE_AGENT_RUNNER_WATCHDOG_INTERVAL_SECONDS` | `60` | Watchdog check interval |
+| `SRE_AGENT_RUNNER_WATCHDOG_SCHEDULE_GRACE_SECONDS` | `300` | Allowed delay after `next_run_at` before recovery |
+| `SRE_AGENT_RUNNER_WATCHDOG_DATA_LAG_MINUTES` | `60` | Latest metric window lag threshold before recovery |
+| `SRE_AGENT_RUNNER_WATCHDOG_STALE_JOB_SECONDS` | `420` | Requeue running jobs older than this threshold |
 | `SRE_AGENT_HISTORICAL_BACKFILL_DAYS` | `15` | Historical gap scan window for the standalone backfill worker |
 | `SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS` | `24` | Recent window reserved for the service runner |
 | `SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS` | `24` | Maximum bulk collector range per historical backfill call |
@@ -343,7 +353,16 @@ versions.
 | `POST /models/train` | Dry-run readiness or persist evaluated `seasonal_quantile_v1` models |
 | `GET /models/training_runs` | List training and dry-run records |
 | `GET /models` | List persisted model versions and activation state |
+| `GET /models/activation/evaluate` | Evaluate a model version against activation gates without changing active state |
+| `POST /models/activate` | Activate a model version only when policy gates pass, unless `force=true` |
+| `POST /models/rollback` | Roll back active models to a previous or explicit target model version |
+| `GET /models/activation/events` | List activation, blocked activation, and rollback audit events |
 | `POST /risk/feedback` | Store false positive, false negative, or confirmed incident labels |
+| `GET /risk/feedback` | List recent feedback labels |
+| `GET /risk/feedback/candidates` | List high-risk windows that need human feedback review |
+| `GET /risk/feedback/report` | Summarize feedback by service and label type |
+| `POST /risk/calibration/generate` | Generate enabled calibration rules from feedback labels |
+| `GET /risk/calibration/rules` | List active or inactive calibration rules |
 
 The initial model type is `seasonal_quantile_v1`. It is unsupervised and learns
 normal service behavior by `weekday + hour + 15m minute_slot`. Training writes
@@ -353,6 +372,85 @@ models, buckets, and evaluation rows when `dry_run=false`. Keep
 deviation, and robust MAD score, then exposes the result as
 `dynamic_baseline_risk` and merges ML evidence into `top_evidence`. If no active
 model exists for a service, risk v2 continues using the rule baseline fallback.
+
+Activation / rollback policy:
+
+- Default activation requires service coverage >= 95%, model coverage >= 95%,
+  average training coverage >= 95%, no missing modeled services, no stale
+  services, max training lag <= 24h, and quality score >= 90.
+- Drift is evaluated and returned with the decision. The default policy records
+  drift as an audit signal but does not block activation because Prometheus
+  resource drift can be intentionally sensitive during early tuning. Set
+  `policy.drift_gate_enabled=true` plus `max_drift_high_service_pct` and
+  `max_drift_warning_service_pct` to make drift a hard gate.
+- `POST /models/activate` writes a `model_activation_events` audit row whether
+  activation succeeds or is blocked. Use `force=true` only for an intentional
+  manual override; the forced decision is still recorded.
+- `POST /models/rollback` reactivates an explicit `target_model_version`, or the
+  previous model version from the latest successful activation event when no
+  target is provided.
+
+Example:
+
+```bash
+curl 'http://127.0.0.1:8080/models/activation/evaluate?model_version=seasonal-quantile-v4-20260703'
+
+curl -X POST http://127.0.0.1:8080/models/activate \
+  -H 'Content-Type: application/json' \
+  -d '{"model_version":"seasonal-quantile-v4-20260703"}'
+
+curl -X POST http://127.0.0.1:8080/models/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{"target_model_version":"seasonal-quantile-v3-20260701","reason":"post-activation false positives increased"}'
+```
+
+Feedback-aware calibration:
+
+1. Pull high-risk windows that need human review:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/candidates?lookback_hours=6&min_score=50&limit=20'
+   ```
+
+2. Submit labels after reviewing a candidate window:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8080/risk/feedback \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "service_id": "backoffice-v2-bff",
+       "window_start": "2026-06-25T08:00:00Z",
+       "window_end": "2026-06-25T14:00:00Z",
+       "risk_version": "risk-v2",
+       "model_version": "seasonal-quantile-v2-20260626",
+       "label_type": "false_positive",
+       "actual_severity": "normal",
+       "false_positive": true,
+       "payload": {
+         "reason": "normal business peak",
+         "top_evidence": [
+           {"source": "ml_dynamic_baseline", "metric": "newrelic.latency_p95_ms"}
+         ]
+       }
+     }'
+   ```
+
+3. Review label distribution:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/report?days=30'
+   ```
+
+4. Generate calibration rules:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8080/risk/calibration/generate \
+     -H 'Content-Type: application/json' \
+     -d '{"days":30,"min_labels":2,"activate":true}'
+   ```
+
+5. Verify `/risk/score` returns `risk_calibration.status=active` and evidence
+   items include `calibration_rules` when a rule matched.
 
 Freshness statuses:
 

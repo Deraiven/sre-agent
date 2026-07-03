@@ -41,6 +41,11 @@ class AgentConfig:
     historical_backfill_days: int
     historical_backfill_exclude_recent_hours: int
     historical_backfill_max_range_hours: int
+    runner_watchdog_enabled: bool
+    runner_watchdog_interval_seconds: int
+    runner_watchdog_schedule_grace_seconds: int
+    runner_watchdog_data_lag_minutes: int
+    runner_watchdog_stale_job_seconds: int
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -92,4 +97,12 @@ def load_config() -> AgentConfig:
         historical_backfill_days=env_int("SRE_AGENT_HISTORICAL_BACKFILL_DAYS", 15),
         historical_backfill_exclude_recent_hours=env_int("SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS", 24),
         historical_backfill_max_range_hours=env_int("SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS", 24),
+        runner_watchdog_enabled=env_bool("SRE_AGENT_RUNNER_WATCHDOG_ENABLED", True),
+        runner_watchdog_interval_seconds=max(10, env_int("SRE_AGENT_RUNNER_WATCHDOG_INTERVAL_SECONDS", 60)),
+        runner_watchdog_schedule_grace_seconds=max(60, env_int("SRE_AGENT_RUNNER_WATCHDOG_SCHEDULE_GRACE_SECONDS", 5 * 60)),
+        runner_watchdog_data_lag_minutes=max(15, env_int("SRE_AGENT_RUNNER_WATCHDOG_DATA_LAG_MINUTES", 60)),
+        runner_watchdog_stale_job_seconds=max(
+            120,
+            env_int("SRE_AGENT_RUNNER_WATCHDOG_STALE_JOB_SECONDS", env_int("SRE_AGENT_COLLECTION_TIMEOUT_SECONDS", 300) + 120),
+        ),
     )
