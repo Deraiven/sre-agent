@@ -1,6 +1,6 @@
 # SRE Agent TODO
 
-Updated: 2026-06-24
+Updated: 2026-06-26
 
 This file tracks known limitations, discovered issues, and next implementation
 work for the SRE Agent. Keep it current when behavior, config, or docs change.
@@ -14,8 +14,8 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Gap recovery | Working | Runner is bounded to near-term gaps; historical gaps are handled by a standalone backfill worker |
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
-| SLO recommendations | Generated | `slo-rec-v1` wrote 51 pending-review recommendations from the last 30d of 15m windows |
-| Dynamic service baselines | Working | Rule-based seasonal baselines exist; ML-driven dynamic baselines are P0 |
+| SLO recommendations | Reviewed | `slo-rec-v1` wrote 51 recommendations from the last 30d of 15m windows; 46 are approved, 2 provisional, 2 domain-specific, and 1 reliability-roadmap item |
+| Dynamic service baselines | Working | Rule-based seasonal baselines exist; reviewed ML seasonal models are active for eligible services |
 | Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
 | Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
@@ -27,10 +27,10 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
-| P0 | Generate SLO recommendations | generated, owner review pending | 51 services have initial availability/error-rate/p95/p99 candidates in `slo_recommendations` |
-| P0 | ML-driven dynamic baseline per service/metric | first batch evaluated, activation pending | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
+| P0 | Generate SLO recommendations | reviewed | 51 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
+| P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | framework added | Show coverage, sample count, slot coverage, confidence, drift, and model freshness for every service/metric |
-| P0 | Risk evaluator based on dynamic baseline residuals | framework added, residual scoring pending | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
+| P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
 | P0 | Automatic retraining schedule | schema/API added, scheduler pending | Refresh baselines daily or weekly with versioned model snapshots and rollback |
 | P0 | Feedback-aware risk calibration | feedback label table/API added, calibration pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
 
@@ -90,14 +90,28 @@ Framework completed:
 - Added training dry-run and first `seasonal_quantile_v1` training API.
 - Added risk feedback label API.
 - Added `/risk/score.dynamic_baseline_model` fallback status.
+- Added active-model residual scoring in `/risk/score.dynamic_baseline_risk`.
 
-First training batch:
+Current activated model state:
 
-- Trained 10 services with about 70.76% 30-day coverage.
-- Created 158 evaluated service/metric models.
-- Created 72,530 model buckets.
-- Created 158 evaluation rows.
-- Models are not active yet; risk still uses rule baseline fallback.
+- `seasonal-quantile-v2-20260626` is active for eligible SLO-candidate HTTP
+  services with sufficient coverage.
+- 360 service/metric models are active across 36 services.
+- 147 evaluated models remain inactive for services intentionally excluded from
+  automatic activation, such as consumer/job/streaming/edge candidates and
+  services still in reliability roadmap review.
+- `/risk/score` loads active seasonal buckets in this fallback order:
+  `weekday_hour_slot`, `hour_slot`, `weekday_hour`, `hour`, `global`.
+- Risk evidence now includes residual, p95/p99 deviation, robust MAD score,
+  model version, bucket scope, sample count, and confidence.
+
+Remaining P0 work:
+
+- Formalize automatic activation and rollback policy instead of manual SQL.
+- Add model freshness and drift checks to the quality report.
+- Schedule daily or weekly retraining with a reviewed activation gate.
+- Use `risk_feedback_labels` to calibrate residual thresholds and reduce false
+  positives during normal peak periods.
 
 ## Known Issues Found During Testing
 

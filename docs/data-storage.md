@@ -442,6 +442,8 @@ flowchart TD
     Postgres --> Baseline["Recompute service_baselines via API/manual job"]
     Baseline --> Label["Write anomaly_windows"]
     Label --> SLO["Write slo_recommendations"]
+    Postgres --> Model["Train / activate service_metric_models"]
+    Model --> Risk["ML residual risk scoring"]
     Postgres --> Trace["On-demand incident trace inspect"]
     Trace --> TraceStore["Write incident_trace_evidence"]
     Trace --> InspectStore["Write incident_inspections / feedback"]

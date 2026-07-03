@@ -185,8 +185,10 @@ The first intelligence layer is deliberately rule-based:
   without writing SQL by hand.
 - `anomalies/mark` labels windows by comparing New Relic, Prometheus, and
   Kubernetes signals against the baseline.
-- `risk/score` computes risk v2 from recent window scores plus persisted New
-  Relic transaction baseline deviations when trace evidence exists.
+- `risk/score` computes risk v2 from recent window scores, active ML seasonal
+  baseline residuals, and persisted New Relic transaction baseline deviations
+  when trace evidence exists. ML evidence is returned under
+  `dynamic_baseline_risk` and merged into `top_evidence`.
   High request volume or rpm is treated as traffic context, not risk by itself;
   resource metrics are compared against multiple weighted baselines. The
   service's weekday/hour/15m slot baseline has the highest weight, while global
@@ -197,4 +199,7 @@ The first intelligence layer is deliberately rule-based:
 - `models/quality`, `models/train`, and `models/training_runs` provide the P0
   unsupervised dynamic-baseline workflow. The first trainable version builds
   `seasonal_quantile_v1` model buckets from historical 15-minute windows and
-  stores evaluated models without activating them unless requested.
+  stores evaluated models without activating them unless requested. Active
+  models are consumed by `risk/score` through seasonal bucket fallback:
+  `weekday + hour + minute_slot`, `hour + minute_slot`, `weekday + hour`,
+  `hour`, then `global`.

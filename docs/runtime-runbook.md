@@ -330,8 +330,8 @@ comparisons:
 
 P0 model endpoints are available. The current implementation can create
 `seasonal_quantile_v1` training runs, persist evaluated per-service/per-metric
-models, write seasonal bucket quantiles, and keep models inactive until they are
-validated and explicitly activated.
+models, write seasonal bucket quantiles, and explicitly activate reviewed model
+versions.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -344,10 +344,11 @@ validated and explicitly activated.
 The initial model type is `seasonal_quantile_v1`. It is unsupervised and learns
 normal service behavior by `weekday + hour + 15m minute_slot`. Training writes
 models, buckets, and evaluation rows when `dry_run=false`. Keep
-`activate=false` while validating backtest quality; until a model is activated,
-`/risk/score` returns
-`dynamic_baseline_model.status=not_trained` and continues using risk v2 rule
-baselines as fallback.
+`activate=false` while validating backtest quality; after activation,
+`/risk/score` loads active seasonal buckets, computes residuals, p95/p99
+deviation, and robust MAD score, then exposes the result as
+`dynamic_baseline_risk` and merges ML evidence into `top_evidence`. If no active
+model exists for a service, risk v2 continues using the rule baseline fallback.
 
 ## Incident Inspect V2
 
