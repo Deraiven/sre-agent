@@ -78,6 +78,11 @@ starts a fresh process. On restart, the service returns interrupted
 ## Runner Behavior
 
 The runner starts automatically when `SRE_AGENT_RUNNER_ENABLED=true`.
+The runner also starts an internal watchdog by default. It checks that the
+scheduler thread is alive, workers match the configured concurrency, queued or
+running jobs are draining, and latest metric windows are not falling behind.
+Recovery events are written to `runner_watchdog_events` and exposed from
+`/runner/status.recent_watchdog_events`.
 
 Each run:
 
@@ -111,6 +116,17 @@ Default settings:
 | `SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN` | `8` | Recover at most this many 15m windows per runner cycle |
 | `SRE_AGENT_GAP_SERVICE_CHUNK_SIZE` | `20` | Number of services collected by one gap recovery job |
 | `SRE_AGENT_GAP_RECOVERY_ORDER` | `newest` | Recover recent gaps first inside the runner-owned window |
+| `SRE_AGENT_RUNNER_WATCHDOG_ENABLED` | `true` | Enable internal runner self-healing |
+| `SRE_AGENT_RUNNER_WATCHDOG_INTERVAL_SECONDS` | `60` | Watchdog check interval |
+| `SRE_AGENT_RUNNER_WATCHDOG_SCHEDULE_GRACE_SECONDS` | `300` | Allowed delay after `next_run_at` before recovery |
+| `SRE_AGENT_RUNNER_WATCHDOG_DATA_LAG_MINUTES` | `60` | Latest metric window lag threshold before recovery |
+| `SRE_AGENT_RUNNER_WATCHDOG_STALE_JOB_SECONDS` | `420` | Requeue running jobs older than this threshold |
+| `SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED` | `false` | Enable service-owned automatic dynamic-baseline training |
+| `SRE_AGENT_MODEL_TRAINING_DAILY_AT` | `04:00` | Local daily training time |
+| `SRE_AGENT_MODEL_TRAINING_TIMEZONE` | `Asia/Shanghai` | Timezone used for the daily training trigger |
+| `SRE_AGENT_MODEL_TRAINING_DAYS` | `30` | Historical 15m window lookback for training |
+| `SRE_AGENT_MODEL_TRAINING_MIN_COVERAGE_PCT` | `95` | Minimum coverage for precheck and training eligibility |
+| `SRE_AGENT_MODEL_TRAINING_ACTIVATION_POLICY` | `{}` | Optional JSON override for activation gates |
 | `SRE_AGENT_HISTORICAL_BACKFILL_DAYS` | `15` | Historical gap scan window for the standalone backfill worker |
 | `SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS` | `24` | Recent window reserved for the service runner |
 | `SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS` | `24` | Maximum bulk collector range per historical backfill call |
@@ -248,14 +264,50 @@ Kubernetes events can come from either the Kubernetes API or VictoriaLogs. Set
 VictoriaLogs rows into the existing `kubernetes.events` shape and reuses the
 same `probe_failure_count`, `failed_scheduling_count`, `killing_event_count`,
 and `image_pull_failure_count` feature fields. If kubectl workload/pod inspect
-times out but VictoriaLogs events are available, the row is written with
-`kubernetes.status=events_only`. In that mode risk and inspect only use event
-signals, not replicas, pod phase, current restart count, or rollout state.
+times out but the VictoriaLogs fallback query succeeds, the row is written with
+`kubernetes.status=events_only`; this includes the normal zero-event case, where
+all event count fields are written as `0`. If workload/pod inspect succeeds but
+only the event source fails, the row is written with `kubernetes.status=partial`
+and keeps replica/pod state while writing event counts as `0`. In
+`events_only` mode risk and inspect only use event signals, not replicas, pod
+phase, current restart count, or rollout state.
+Production VictoriaLogs is currently available through the internal ELB
+`http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427`;
+the former public URL is no longer usable. The collector bypasses local HTTP
+proxy settings for VictoriaLogs calls so the internal ELB is reached directly.
 
 For the current `pro` VictoriaLogs stream, Kubernetes event rows use fields like
 `log_type=k8s_events`, `namespace=pro`, `kind=Pod`, `name=<pod-name>`,
 `reason`, `level`, `count`, `_time`, and `_msg`. The default template filters by
 namespace and pod-name prefix derived from the service workload name.
+Kubernetes Event rows are deduplicated by `metadata.uid` before they become
+feature counts. If the UID is unavailable, the collector falls back to
+`involvedObject.uid/name + reason + message + firstTimestamp`. The payload keeps
+both `event_rows` and `unique_event_count` so reviewers can identify repeated
+VictoriaLogs snapshots. Drift and risk scoring suppress historical aggregate
+event rows that have `event_rows` but no `unique_event_count`; refresh those
+windows with the targeted Kubernetes events backfill before treating probe
+counts as incident evidence.
+
+Historical bulk backfills skip Kubernetes by design. To fill Kubernetes event
+counts for existing 15m windows without running kubectl for every historical
+window, use the VictoriaLogs-only backfill script:
+
+```bash
+python3 scripts/backfill_kubernetes_events.py \
+  --days 30 \
+  --victorialogs-url http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427 \
+  --victorialogs-kubernetes-events-query-template \
+  'log_type:k8s_events namespace:{namespace} name:~"{workload_name}-.+"'
+```
+
+The script rewrites selected `mapped`/`error` Kubernetes placeholders to
+`events_only`, removes `kubernetes_events` from `data_quality.missing_sources`,
+and preserves New Relic, Prometheus, and GitHub fields. The default mode
+downloads raw event rows and deduplicates repeated Kubernetes Event snapshots.
+Use `--aggregate-events` only when you intentionally want the faster
+VictoriaLogs `/select/logsql/hits` grouped by event `reason`; aggregate mode
+cannot deduplicate repeated Event snapshots.
 
 ## Baseline And Anomaly Operations
 
@@ -342,8 +394,21 @@ versions.
 | `GET /models/drift` | Compare recent windows with active seasonal buckets and report p95/p99 breach rates plus robust MAD drift |
 | `POST /models/train` | Dry-run readiness or persist evaluated `seasonal_quantile_v1` models |
 | `GET /models/training_runs` | List training and dry-run records |
+| `GET /models/training_data_quality` | Run the automatic-training precheck without training a model |
+| `GET /models/training_scheduler/runs` | List automatic training scheduler audit runs |
+| `POST /models/training_scheduler/run` | Manually execute the service-owned scheduler flow once |
 | `GET /models` | List persisted model versions and activation state |
+| `GET /models/activation/evaluate` | Evaluate a model version against activation gates without changing active state |
+| `POST /models/activate` | Activate a model version only when policy gates pass, unless `force=true` |
+| `POST /models/rollback` | Roll back active models to a previous or explicit target model version |
+| `GET /models/activation/events` | List activation, blocked activation, and rollback audit events |
 | `POST /risk/feedback` | Store false positive, false negative, or confirmed incident labels |
+| `GET /risk/feedback` | List recent feedback labels |
+| `GET /risk/feedback/candidates` | List high-risk windows that need human feedback review |
+| `GET /risk/feedback/review_plan` | Show the daily feedback review quota, progress, label gaps, and candidate list |
+| `GET /risk/feedback/report` | Summarize feedback by service and label type |
+| `POST /risk/calibration/generate` | Generate enabled calibration rules from feedback labels |
+| `GET /risk/calibration/rules` | List active or inactive calibration rules |
 
 The initial model type is `seasonal_quantile_v1`. It is unsupervised and learns
 normal service behavior by `weekday + hour + 15m minute_slot`. Training writes
@@ -353,6 +418,148 @@ models, buckets, and evaluation rows when `dry_run=false`. Keep
 deviation, and robust MAD score, then exposes the result as
 `dynamic_baseline_risk` and merges ML evidence into `top_evidence`. If no active
 model exists for a service, risk v2 continues using the rule baseline fallback.
+
+Automatic training scheduler:
+
+- Disabled by default with `SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED=false`.
+- When enabled, the service runs the scheduler once per day at
+  `SRE_AGENT_MODEL_TRAINING_DAILY_AT` in
+  `SRE_AGENT_MODEL_TRAINING_TIMEZONE`.
+- Each run writes `model_training_scheduler_runs`.
+- The scheduler first calls the training data quality gate. It blocks before
+  training when coverage, source success, latest data lag, data-quality errors,
+  or per-service eligibility fail.
+- If precheck passes, it trains a new candidate model version without direct
+  activation, evaluates the normal activation gates, then activates or writes a
+  blocked activation event.
+- Manual validation can use:
+
+  ```bash
+  curl 'http://127.0.0.1:8080/models/training_data_quality?days=30'
+
+  curl -X POST http://127.0.0.1:8080/models/training_scheduler/run \
+    -H 'Content-Type: application/json' \
+    -d '{"model_version":"seasonal-quantile-auto-test","trigger_source":"manual_validation"}'
+
+  curl 'http://127.0.0.1:8080/models/training_scheduler/runs?limit=10'
+  ```
+
+Activation / rollback policy:
+
+- Default activation requires service coverage >= 95%, model coverage >= 95%,
+  average training coverage >= 95%, no missing modeled services, no stale
+  services, max training lag <= 24h, and quality score >= 90.
+- Drift is evaluated and returned with the decision. The default policy records
+  drift as an audit signal but does not block activation because Prometheus
+  resource drift can be intentionally sensitive during early tuning. Set
+  `policy.drift_gate_enabled=true` plus `max_drift_high_service_pct` and
+  `max_drift_warning_service_pct` to make drift a hard gate.
+- `POST /models/activate` writes a `model_activation_events` audit row whether
+  activation succeeds or is blocked. Use `force=true` only for an intentional
+  manual override; the forced decision is still recorded.
+- `POST /models/rollback` reactivates an explicit `target_model_version`, or the
+  previous model version from the latest successful activation event when no
+  target is provided.
+
+Example:
+
+```bash
+curl 'http://127.0.0.1:8080/models/activation/evaluate?model_version=seasonal-quantile-v4-20260703'
+
+curl -X POST http://127.0.0.1:8080/models/activate \
+  -H 'Content-Type: application/json' \
+  -d '{"model_version":"seasonal-quantile-v4-20260703"}'
+
+curl -X POST http://127.0.0.1:8080/models/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{"target_model_version":"seasonal-quantile-v3-20260701","reason":"post-activation false positives increased"}'
+```
+
+Feedback-aware calibration:
+
+Risk feedback candidates intentionally filter common noisy evidence before a
+human review is requested:
+
+- New Relic error-rate evidence must have estimated `error_count >= 10`,
+  `error_rate >= 0.05%`, and at least `0.05` percentage-point delta over the
+  selected baseline.
+- New Relic latency p95 evidence must have `request_count >= 100` and
+  `latency_p95_ms >= 200`.
+- New Relic latency p99 evidence must have `request_count >= 300` and
+  `latency_p99_ms >= 500`.
+- Prometheus resource and traffic metrics are context evidence. They are capped
+  at 12 points per evidence item and should not be used alone as a root cause.
+- `/models/drift` returns `qualified_sample_count`, `suppressed_sample_count`,
+  `suppressed_counts`, and `suppressed_examples` so reviewers can see which
+  low-sample or low-absolute-value windows were ignored.
+
+1. Check the daily feedback review plan. The default quota is 5 reviewed risk
+   windows per Asia/Shanghai day. Increase it temporarily when calibration data
+   is sparse or after a noisy alert period:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/review_plan?daily_quota=5&lookback_hours=24&min_score=50&limit=20'
+   ```
+
+   The response reports today's completed labels, remaining review count, the
+   30-day label distribution, calibration blockers, and the highest-priority
+   candidates to review next.
+
+2. Pull high-risk windows that need human review:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/candidates?lookback_hours=6&min_score=50&limit=20'
+   ```
+
+3. Submit labels after reviewing a candidate window:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8080/risk/feedback \
+     -H 'Content-Type: application/json' \
+     -d '{
+       "service_id": "backoffice-v2-bff",
+       "window_start": "2026-06-25T08:00:00Z",
+       "window_end": "2026-06-25T14:00:00Z",
+       "risk_version": "risk-v2",
+       "model_version": "seasonal-quantile-v2-20260626",
+       "label_type": "false_positive",
+       "actual_severity": "normal",
+       "false_positive": true,
+       "payload": {
+         "reason": "normal business peak",
+         "top_evidence": [
+           {"source": "ml_dynamic_baseline", "metric": "newrelic.latency_p95_ms"}
+         ]
+       }
+     }'
+   ```
+
+4. Review label distribution:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/report?days=30'
+   ```
+
+5. Generate calibration rules:
+
+   ```bash
+   curl -X POST http://127.0.0.1:8080/risk/calibration/generate \
+     -H 'Content-Type: application/json' \
+     -d '{"days":30,"min_labels":2,"activate":true}'
+   ```
+
+6. Verify `/risk/score` returns `risk_calibration.status=active` and evidence
+   items include `calibration_rules` when a rule matched.
+
+Recommended operating rule:
+
+- Review at least 5 candidates every working day until the last 30 days have at
+  least 20 reviewed labels and at least one `false_negative`.
+- Keep the mix balanced: confirmed incidents validate risk evidence, false
+  positives dampen noisy evidence, and false negatives teach the agent what it
+  missed.
+- Treat generated calibration rules as experimental until recurring
+  `service_id + metric_name + evidence_source` patterns have at least 5 labels.
 
 Freshness statuses:
 
@@ -366,8 +573,13 @@ Freshness statuses:
 Drift statuses:
 
 - `stable`: recent windows are still represented by the active seasonal buckets.
-- `drift_warning`: p95 breach rate is at least 20% or MAD p95 is at least 4.
-- `drift_high`: p99 breach rate is at least 10% or MAD p95 is at least 6.
+- `drift_warning`: recent windows show sustained deviation, but not enough
+  primary signal movement to treat the model as clearly invalid.
+- `drift_high`: at least two primary metrics are high, or one primary metric is
+  high with broad context-metric drift.
+- Primary metrics are New Relic error/latency and Kubernetes event metrics.
+  Traffic and Prometheus resource/network metrics are context signals; they can
+  raise warning, but should not by themselves mark the service as high drift.
 - `insufficient_samples`: not enough recent samples for a reliable drift read.
 - `no_active_model`: service has no active model.
 

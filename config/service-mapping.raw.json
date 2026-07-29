@@ -94,8 +94,8 @@
     },
     {
       "service_id": "backoffice-scheduled-jobs",
-      "newrelic_app_name": "BackOffice Server",
-      "newrelic_app_id": "2183378",
+      "newrelic_app_name": "BackOffice-scheduled-jobs",
+      "newrelic_app_id": "1058544253",
       "github_repo": "storehubnet/backoffice-v1-web",
       "eks_deployment": "backoffice-v1-web-scheduledjob",
       "eks_namespace": "pro",

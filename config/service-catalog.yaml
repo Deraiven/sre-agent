@@ -309,9 +309,9 @@ services:
   github_repo: storehubnet/backoffice-v1-web
   production_branch: master
   newrelic:
-    app_name: BackOffice Server
-    app_id: '2183378'
-    entity_guid: NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwyMTgzMzc4
+    app_name: BackOffice-scheduled-jobs
+    app_id: '1058544253'
+    entity_guid: NDY0MjU0fEFQTXxBUFBMSUNBVElPTnwxMDU4NTQ0MjUz
   kubernetes:
     cluster: storehub-pro
     namespace: pro

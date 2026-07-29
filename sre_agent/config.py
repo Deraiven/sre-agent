@@ -41,6 +41,20 @@ class AgentConfig:
     historical_backfill_days: int
     historical_backfill_exclude_recent_hours: int
     historical_backfill_max_range_hours: int
+    runner_watchdog_enabled: bool
+    runner_watchdog_interval_seconds: int
+    runner_watchdog_schedule_grace_seconds: int
+    runner_watchdog_data_lag_minutes: int
+    runner_watchdog_stale_job_seconds: int
+    model_training_scheduler_enabled: bool
+    model_training_daily_at: str
+    model_training_timezone: str
+    model_training_days: int
+    model_training_min_coverage_pct: float
+    model_training_min_bucket_samples: int
+    model_training_min_precise_bucket_samples: int
+    model_training_activation_policy: dict
+    model_training_startup_delay_seconds: int
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -55,6 +69,25 @@ def env_int(name: str, default: int) -> int:
     if raw is None or raw.strip() == "":
         return default
     return int(raw)
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return float(raw)
+
+
+def env_json_dict(name: str, default: dict) -> dict:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    import json
+
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be a JSON object")
+    return value
 
 
 def load_config() -> AgentConfig:
@@ -92,4 +125,21 @@ def load_config() -> AgentConfig:
         historical_backfill_days=env_int("SRE_AGENT_HISTORICAL_BACKFILL_DAYS", 15),
         historical_backfill_exclude_recent_hours=env_int("SRE_AGENT_HISTORICAL_BACKFILL_EXCLUDE_RECENT_HOURS", 24),
         historical_backfill_max_range_hours=env_int("SRE_AGENT_HISTORICAL_BACKFILL_MAX_RANGE_HOURS", 24),
+        runner_watchdog_enabled=env_bool("SRE_AGENT_RUNNER_WATCHDOG_ENABLED", True),
+        runner_watchdog_interval_seconds=max(10, env_int("SRE_AGENT_RUNNER_WATCHDOG_INTERVAL_SECONDS", 60)),
+        runner_watchdog_schedule_grace_seconds=max(60, env_int("SRE_AGENT_RUNNER_WATCHDOG_SCHEDULE_GRACE_SECONDS", 5 * 60)),
+        runner_watchdog_data_lag_minutes=max(15, env_int("SRE_AGENT_RUNNER_WATCHDOG_DATA_LAG_MINUTES", 60)),
+        runner_watchdog_stale_job_seconds=max(
+            120,
+            env_int("SRE_AGENT_RUNNER_WATCHDOG_STALE_JOB_SECONDS", env_int("SRE_AGENT_COLLECTION_TIMEOUT_SECONDS", 300) + 120),
+        ),
+        model_training_scheduler_enabled=env_bool("SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED", False),
+        model_training_daily_at=os.environ.get("SRE_AGENT_MODEL_TRAINING_DAILY_AT", "04:00"),
+        model_training_timezone=os.environ.get("SRE_AGENT_MODEL_TRAINING_TIMEZONE", "Asia/Shanghai"),
+        model_training_days=max(14, env_int("SRE_AGENT_MODEL_TRAINING_DAYS", 30)),
+        model_training_min_coverage_pct=max(0.0, env_float("SRE_AGENT_MODEL_TRAINING_MIN_COVERAGE_PCT", 95.0)),
+        model_training_min_bucket_samples=max(3, env_int("SRE_AGENT_MODEL_TRAINING_MIN_BUCKET_SAMPLES", 12)),
+        model_training_min_precise_bucket_samples=max(3, env_int("SRE_AGENT_MODEL_TRAINING_MIN_PRECISE_BUCKET_SAMPLES", 3)),
+        model_training_activation_policy=env_json_dict("SRE_AGENT_MODEL_TRAINING_ACTIVATION_POLICY", {}),
+        model_training_startup_delay_seconds=max(0, env_int("SRE_AGENT_MODEL_TRAINING_STARTUP_DELAY_SECONDS", 120)),
     )

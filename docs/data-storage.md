@@ -24,6 +24,7 @@
 | incident trace evidence | 按需 New Relic trace 摘要和 RCA 证据 | PostgreSQL |
 | incident inspect result/feedback | 异步 inspect 状态、结果、summary、timeline、人工反馈 | PostgreSQL |
 | transaction baseline | New Relic transaction 级 latency baseline | PostgreSQL |
+| runner watchdog events | runner 自恢复、stale job requeue、scheduler/worker restart 事件 | PostgreSQL |
 | New Relic/Prometheus 查询原始响应 | 体积较大，不常查 | S3 |
 | Agent 生成的长报告 | 文本较长，审计用 | S3 + PostgreSQL metadata |
 | 离线训练集导出 | 批量文件，供 notebook/训练任务使用 | S3 |
@@ -151,6 +152,23 @@ Runner 内的 gap recovery 只负责最近窗口的小缺口自愈。大量历�
 runner 的 `collection_jobs` 队列，避免挤占实时采集 worker。服务级缺口会进入
 near-term `collection_jobs.service_ids`，失败服务可以被后续 runner 重新排队。
 
+### `runner_watchdog_events`
+
+保存 runner 内部 watchdog 的自恢复和告警事件。它回答：“runner 是否错过
+`next_run_at`、worker 是否少于预期、running job 是否卡住、是否因为最新窗口
+落后而自动排了一轮 realtime collection”。
+
+```sql
+create table runner_watchdog_events (
+  id bigserial primary key,
+  event_type text not null,
+  severity text not null default 'warning',
+  action text,
+  details jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+```
+
 ### `service_baselines`
 
 保存动态基线，避免每次都从窗口表全量计算。
@@ -199,7 +217,10 @@ P0 模型框架保存训练计划、模型版本、质量报告和 feedback labe
 | `service_metric_models` | 保存 `service_id + metric_name` 级别的模型版本、状态、特征定义和质量摘要 |
 | `service_metric_model_buckets` | 保存未来 `seasonal_quantile_v1` 的时间槽 bucket、quantile、MAD 和 confidence |
 | `service_metric_model_evaluations` | 保存 backtest、shadow mode、误报漏报等模型验证结果 |
+| `model_training_scheduler_runs` | 保存服务内自动训练 scheduler 的 precheck、training_run、activation/blocked 结果和错误 |
+| `model_activation_events` | 保存模型激活、阻断和回滚决策，包含策略、gate 结果、previous model 和审计时间 |
 | `risk_feedback_labels` | 保存 risk 误报、漏报、confirmed incident 等反馈标签，用于后续半监督校准 |
+| `risk_calibration_rules` | 保存由 feedback 生成的服务/指标/evidence 权重校准规则，risk score 会读取 enabled 规则 |
 
 第一阶段模型类型是 `seasonal_quantile_v1`，特征框架包括：
 

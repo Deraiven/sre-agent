@@ -21,15 +21,34 @@ from .incident_inspect import (
     get_incident_inspection,
     run_incident_inspection,
 )
-from .intelligence import build_baselines, data_coverage, data_gaps, mark_anomalies, score_service_risk, utc_now
+from .intelligence import (
+    build_baselines,
+    data_coverage,
+    data_gaps,
+    generate_risk_calibration_rules,
+    list_risk_calibration_rules,
+    list_risk_feedback_labels,
+    mark_anomalies,
+    risk_feedback_candidates,
+    risk_feedback_report,
+    risk_feedback_review_plan,
+    score_service_risk,
+    utc_now,
+)
 from .ml_baseline import (
     add_risk_feedback_label,
+    activate_model_version,
     create_training_run,
+    list_model_training_scheduler_runs,
+    model_activation_events,
+    model_activation_evaluation,
     list_models,
     list_training_runs,
     model_drift_report,
     model_freshness_report,
     model_quality_report,
+    rollback_model_version,
+    training_data_quality_gate,
 )
 from .newrelic_trace import build_transaction_baselines
 from .runner import ScheduledRunner, parse_time, result_to_dict
@@ -207,9 +226,11 @@ from (
                     model_drift_report(
                         self.runner.config.database_url,
                         service_ids=service_ids,
+                        model_version=(query.get("model_version") or [None])[0],
                         lookback_hours=int((query.get("lookback_hours") or ["24"])[0]),
                         window_size=(query.get("window_size") or ["15m"])[0],
                         min_samples=int((query.get("min_samples") or ["12"])[0]),
+                        active_only=(query.get("active_only") or ["true"])[0].lower() in {"1", "true", "yes"},
                     ),
                 )
                 return
@@ -227,10 +248,131 @@ from (
                     },
                 )
                 return
+            if path == "/models/activation/evaluate":
+                model_version = (query.get("model_version") or [None])[0]
+                if not model_version:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "model_version is required"})
+                    return
+                self._send_json(
+                    HTTPStatus.OK,
+                    model_activation_evaluation(
+                        self.runner.config.database_url,
+                        model_version=model_version,
+                    ),
+                )
+                return
+            if path == "/models/activation/events":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "events": model_activation_events(
+                            self.runner.config.database_url,
+                            model_version=(query.get("model_version") or [None])[0],
+                            limit=int((query.get("limit") or ["50"])[0]),
+                        )
+                    },
+                )
+                return
+            if path == "/models/training_data_quality":
+                self._send_json(
+                    HTTPStatus.OK,
+                    training_data_quality_gate(
+                        self.runner.config.database_url,
+                        days=int((query.get("days") or [str(self.runner.config.model_training_days)])[0]),
+                        window_size=(query.get("window_size") or [self.runner.config.window_size])[0],
+                        min_coverage_pct=float(
+                            (query.get("min_coverage_pct") or [str(self.runner.config.model_training_min_coverage_pct)])[0]
+                        ),
+                        max_latest_lag_minutes=int(
+                            (query.get("max_latest_lag_minutes") or [str(self.runner.config.runner_watchdog_data_lag_minutes)])[0]
+                        ),
+                    ),
+                )
+                return
+            if path == "/models/training_scheduler/runs":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "runs": list_model_training_scheduler_runs(
+                            self.runner.config.database_url,
+                            limit=int((query.get("limit") or ["20"])[0]),
+                        )
+                    },
+                )
+                return
             if path == "/models/training_runs":
                 self._send_json(
                     HTTPStatus.OK,
                     {"training_runs": list_training_runs(self.runner.config.database_url, int((query.get("limit") or ["50"])[0]))},
+                )
+                return
+            if path == "/risk/feedback":
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "feedback": list_risk_feedback_labels(
+                            self.runner.config.database_url,
+                            service_id=(query.get("service_id") or [None])[0],
+                            label_type=(query.get("label_type") or [None])[0],
+                            limit=int((query.get("limit") or ["100"])[0]),
+                        )
+                    },
+                )
+                return
+            if path == "/risk/feedback/report":
+                self._send_json(
+                    HTTPStatus.OK,
+                    risk_feedback_report(
+                        self.runner.config.database_url,
+                        service_id=(query.get("service_id") or [None])[0],
+                        days=int((query.get("days") or ["30"])[0]),
+                    ),
+                )
+                return
+            if path == "/risk/feedback/candidates":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    risk_feedback_candidates(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        lookback_hours=int((query.get("lookback_hours") or ["6"])[0]),
+                        min_score=int((query.get("min_score") or ["50"])[0]),
+                        limit=int((query.get("limit") or ["20"])[0]),
+                        baseline_version=(query.get("baseline_version") or ["baseline-v1"])[0],
+                    ),
+                )
+                return
+            if path == "/risk/feedback/review_plan":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    risk_feedback_review_plan(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        daily_quota=int((query.get("daily_quota") or ["5"])[0]),
+                        lookback_hours=int((query.get("lookback_hours") or ["24"])[0]),
+                        min_score=int((query.get("min_score") or ["50"])[0]),
+                        limit=int((query.get("limit") or ["20"])[0]),
+                        days=int((query.get("days") or ["30"])[0]),
+                        timezone_name=(query.get("timezone") or ["Asia/Shanghai"])[0],
+                        baseline_version=(query.get("baseline_version") or ["baseline-v1"])[0],
+                    ),
+                )
+                return
+            if path == "/risk/calibration/rules":
+                enabled_value = (query.get("enabled") or [None])[0]
+                enabled = None if enabled_value is None else enabled_value.lower() in {"1", "true", "yes"}
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "rules": list_risk_calibration_rules(
+                            self.runner.config.database_url,
+                            service_id=(query.get("service_id") or [None])[0],
+                            enabled=enabled,
+                            limit=int((query.get("limit") or ["100"])[0]),
+                        )
+                    },
                 )
                 return
             if path == "/slo/recommendations":
@@ -395,8 +537,60 @@ from (
                 )
                 self._send_json(HTTPStatus.ACCEPTED, result)
                 return
+            if path == "/models/activate":
+                model_version = payload.get("model_version")
+                if not model_version:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "model_version is required"})
+                    return
+                policy = payload.get("policy")
+                if policy is not None and not isinstance(policy, dict):
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "policy must be an object"})
+                    return
+                result = activate_model_version(
+                    self.runner.config.database_url,
+                    model_version=model_version,
+                    policy=policy,
+                    force=bool(payload.get("force", False)),
+                )
+                status = HTTPStatus.OK if result.get("status") == "activated" else HTTPStatus.CONFLICT
+                self._send_json(status, result)
+                return
+            if path == "/models/rollback":
+                result = rollback_model_version(
+                    self.runner.config.database_url,
+                    target_model_version=payload.get("target_model_version"),
+                    reason=payload.get("reason"),
+                )
+                self._send_json(HTTPStatus.OK, result)
+                return
+            if path == "/models/training_scheduler/run":
+                result = self.runner.run_model_training_once(
+                    model_version=payload.get("model_version"),
+                    trigger_source=payload.get("trigger_source", "manual_api"),
+                )
+                status = HTTPStatus.OK
+                if result.get("status") in {"blocked_precheck", "blocked_activation", "blocked_concurrent_run"}:
+                    status = HTTPStatus.CONFLICT
+                elif result.get("status") == "error":
+                    status = HTTPStatus.INTERNAL_SERVER_ERROR
+                self._send_json(status, result)
+                return
             if path == "/risk/feedback":
                 self._send_json(HTTPStatus.OK, {"feedback": add_risk_feedback_label(self.runner.config.database_url, payload)})
+                return
+            if path == "/risk/calibration/generate":
+                self._send_json(
+                    HTTPStatus.OK,
+                    generate_risk_calibration_rules(
+                        self.runner.config.database_url,
+                        service_id=payload.get("service_id"),
+                        days=int(payload.get("days", 30)),
+                        min_labels=int(payload.get("min_labels", 2)),
+                        activate=bool(payload.get("activate", True)),
+                        risk_version=payload.get("risk_version", "risk-v2"),
+                        model_version=payload.get("model_version"),
+                    ),
+                )
                 return
             if path == "/risk/score":
                 service_id = payload.get("service_id")
@@ -508,7 +702,6 @@ def main() -> None:
     inspector = IncidentInspectionRunner(config)
     AgentRequestHandler.runner = runner
     AgentRequestHandler.inspector = inspector
-    runner.start_worker()
     inspector.start()
     if config.runner_enabled:
         runner.start()

@@ -1,6 +1,6 @@
 # SRE Agent TODO
 
-Updated: 2026-06-26
+Updated: 2026-07-29
 
 This file tracks known limitations, discovered issues, and next implementation
 work for the SRE Agent. Keep it current when behavior, config, or docs change.
@@ -15,9 +15,9 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
 | SLO recommendations | Reviewed | `slo-rec-v1` wrote 51 recommendations from the last 30d of 15m windows; 46 are approved, 2 provisional, 2 domain-specific, and 1 reliability-roadmap item |
-| Dynamic service baselines | Working | Rule-based seasonal baselines exist; reviewed ML seasonal models are active for eligible services |
+| Dynamic service baselines | Working | Rule-based seasonal baselines exist; `seasonal-quantile-auto-202607282000` is active for 51 services / 710 models / 14 metrics |
 | Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
-| Risk scoring v2 | Working | Calibrated rule-based scoring from recent 15m windows, service baselines, and persisted trace evidence |
+| Risk scoring v2 | Working | Combines recent 15m windows, active ML seasonal residual evidence, calibration-rule hooks, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
 | Launchd local runtime | Added | `ops/launchd` can keep local service and tunnel alive |
 
@@ -27,12 +27,12 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
-| P0 | Generate SLO recommendations | reviewed | 51 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
+| P0 | Generate SLO recommendations | reviewed | 52 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
 | P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | working | Shows coverage/readiness, model freshness, and drift via `/models/quality`, `/models/freshness`, and `/models/drift` |
 | P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
-| P0 | Automatic retraining schedule | local automation active, production scheduler pending | Three local automations cover the early retraining schedule; production still needs versioned snapshots, reviewed activation, and rollback |
-| P0 | Feedback-aware risk calibration | feedback label table/API added, calibration pending | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
+| P0 | Automatic retraining schedule | service scheduler implemented, production enablement pending | Service-owned scheduler can run daily training, precheck data quality, gate activation, and audit activated/blocked runs; production still needs enablement and monitoring |
+| P0 | Feedback-aware risk calibration | framework working, labels accumulating | Use incident feedback and false positives to tune risk weights before introducing heavier ML classifiers |
 
 ### P0: ML-Driven Dynamic Baselines
 
@@ -94,27 +94,55 @@ Framework completed:
 - Added `/models/freshness` for active model lag detection.
 - Added `/models/drift` for recent residual, p95/p99 breach-rate, and robust
   MAD drift detection.
+- Added `risk_calibration_rules`, feedback report APIs, calibration rule
+  generation, and risk-score application for matching ML evidence.
+- Added `/risk/feedback/candidates` to surface high-risk windows that need human
+  review before writing real `false_positive`, `false_negative`, or
+  `confirmed_incident` labels.
 
 Current activated model state:
 
-- `seasonal-quantile-v2-20260626` is active for eligible SLO-candidate HTTP
-  services with sufficient coverage.
-- 460 service/metric models are active across 46 services.
-- 47 evaluated models remain inactive for services intentionally excluded from
-  automatic activation, such as consumer/job/streaming/edge candidates and
-  services still in reliability roadmap review.
+- `seasonal-quantile-auto-202607282000` is active.
+- 710 service/metric models are active across 51 services and 14 metrics.
+- Kubernetes event metrics are active for all 51 services:
+  `kubernetes.probe_failure_count`, `kubernetes.failed_scheduling_count`,
+  `kubernetes.image_pull_failure_count`, and `kubernetes.oom_killed_count`.
+- Recent 30d Kubernetes placeholders were backfilled from the internal
+  VictoriaLogs ELB with `scripts/backfill_kubernetes_events.py`; current rows
+  are `events_only` instead of bulk-backfill `mapped` placeholders. Event
+  counts are now expected to come from raw VictoriaLogs event rows so repeated
+  Kubernetes Event snapshots can be deduplicated by `metadata.uid`.
+- Activation and rollback are now API-driven and audited in
+  `model_activation_events`.
 - `/risk/score` loads active seasonal buckets in this fallback order:
   `weekday_hour_slot`, `hour_slot`, `weekday_hour`, `hour`, `global`.
 - Risk evidence now includes residual, p95/p99 deviation, robust MAD score,
   model version, bucket scope, sample count, and confidence.
+- Risk feedback currently has 12 reviewed labels: 9 confirmed incidents, 3
+  false positives, and 0 false negatives. `/risk/feedback/review_plan` now
+  enforces a daily review quota and reports calibration blockers, but
+  `risk_calibration_rules` has not generated trusted enabled rules yet.
+- Drift/risk noise suppression is in place for near-zero error rates,
+  low-sample latency percentiles, undeduplicated Kubernetes Event aggregates,
+  and Prometheus/traffic context evidence. `/models/drift` reports qualified and
+  suppressed sample counts so reviewers can see why a window did or did not
+  become actionable.
 
 Remaining P0 work:
 
-- Formalize automatic activation and rollback policy instead of manual SQL.
-- Productize the three local retraining automations into a service-owned
-  scheduler or Kubernetes CronJob with a reviewed activation gate.
-- Use `risk_feedback_labels` to calibrate residual thresholds and reduce false
-  positives during normal peak periods.
+- Complete the daily feedback review quota until enough reviewed
+  `risk_feedback_labels` exist for trusted calibration rules, then verify
+  matched evidence changes risk in the expected direction.
+- Keep the VictoriaLogs internal ELB URL configured for realtime and historical
+  event fallback; the former public URL is no longer usable.
+- Enable and monitor the service-owned retraining scheduler in production:
+  configure the daily window, data-quality thresholds, activation policy, alert
+  on blocked/error scheduler runs, and decide whether Kubernetes should run it
+  inside the service or as a dedicated CronJob.
+- Deploy the agent inside `storehub-pro` with RBAC, Secrets, health checks,
+  runner/worker separation, and self-monitoring metrics.
+- Keep realtime Kubernetes inspect stable under private API slowness by using
+  bounded kubectl timeouts and VictoriaLogs `events_only` fallback.
 
 ### Later: Domain-Specific SLI for Non-HTTP Services
 
@@ -146,6 +174,10 @@ Implementation notes:
   sufficient.
 - Extend risk scoring so domain SLI deviations contribute evidence and points,
   but keep request count/rpm as traffic context.
+- `backoffice-scheduled-jobs` is now mapped to the correct New Relic app
+  (`BackOffice-scheduled-jobs` / `1058544253`) and its SLO recommendation is
+  approved as `edge_service`; HTTP Transaction availability/latency must not be
+  treated as the final SLO for this scheduled-job service.
 
 Acceptance criteria:
 
@@ -202,20 +234,27 @@ Acceptance criteria:
 
 ### 2. Incident Feedback Training Loop
 
-Status: pending
+Status: partially done
 
 Current limitation:
 
-- Risk scoring does not use incident feedback or post-incident labels.
-- Hypothesis ranking has no quality feedback loop.
+- Risk feedback labels are persisted and can generate calibration rules for
+  matching risk evidence, but current reviewed label volume is still too small
+  for trusted automatic calibration.
+- Incident inspect feedback is persisted, but hypothesis ranking still has no
+  quality feedback loop.
 
 Implementation notes:
 
-- Add `incident_inspections` table.
-- Add `incident_hypothesis_feedback` table.
-- Add API:
+- Continue collecting `risk_feedback_labels` from reviewed candidates.
+- Generate `risk_calibration_rules` only after there is enough directional
+  feedback per service/metric/evidence pattern.
+- Keep API:
+  - `POST /risk/feedback`
+  - `GET /risk/feedback/candidates`
+  - `GET /risk/feedback/report`
+  - `POST /risk/calibration/generate`
   - `POST /inspect/incident/{inspection_id}/feedback`
-  - `GET /inspect/incident/{inspection_id}`
 - Capture whether each hypothesis was confirmed, rejected, or unknown.
 - Use confirmed incidents to tune rule weights before introducing ML.
 
@@ -322,6 +361,7 @@ Acceptance criteria:
 | --- | --- | --- |
 | P1 | Support manual targeted retry by existing failed `collection_jobs.id` | pending |
 | P1 | Add per-source timeout budgets inside one collector job | pending |
+| P1 | Add runner heartbeat/stuck detection and self-healing watchdog | done locally |
 | P2 | Add daily baseline refresh job | pending |
 | P2 | Add daily transaction baseline refresh job | pending |
 | P2 | Deploy historical gap backfill as cron/CronJob | pending |
@@ -333,6 +373,7 @@ Acceptance criteria:
 | P0 | Deploy service inside `storehub-pro` | pending |
 | P0 | Add Kubernetes ServiceAccount and read-only RBAC | pending |
 | P0 | Move secrets to Kubernetes Secret or external secret manager | pending |
+| P0 | Enable retraining scheduler / CronJob in production with alerts | code done, deployment pending |
 | P1 | Replace local launchd/tunnel runtime with cluster Deployment | pending |
 | P1 | Add health checks and resource requests/limits | pending |
 | P1 | Add self-monitoring metrics for runner and API | pending |
@@ -384,6 +425,9 @@ Acceptance criteria:
 - Changed runner gap recovery to a short near-term self-healing window.
 - Added `scripts/historical_gap_backfill.py` for historical gaps outside the runner window.
 - Added `scripts/watch_service.py` watchdog for local service restarts.
+- Added internal runner watchdog for scheduler thread recovery, worker-count
+  recovery, stale running job requeue, metric-window lag recovery, and persisted
+  `runner_watchdog_events`.
 - Added `AGENT.md` coding/operations guide.
 - Built full transaction baseline before catalog cleanup:
   - services queried: 52

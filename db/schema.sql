@@ -68,6 +68,18 @@ create table if not exists runner_runs (
 create index if not exists runner_runs_started_idx
   on runner_runs (started_at desc);
 
+create table if not exists runner_watchdog_events (
+  id bigserial primary key,
+  event_type text not null,
+  severity text not null default 'warning',
+  action text,
+  details jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists runner_watchdog_events_created_idx
+  on runner_watchdog_events (created_at desc);
+
 create table if not exists collection_jobs (
   id bigserial primary key,
   runner_run_id bigint references runner_runs(id),
@@ -168,6 +180,28 @@ create table if not exists service_metric_training_runs (
 create index if not exists service_metric_training_runs_lookup_idx
   on service_metric_training_runs (model_version, status, created_at desc);
 
+create table if not exists model_training_scheduler_runs (
+  id bigserial primary key,
+  model_version text not null,
+  status text not null default 'planned',
+  trigger_source text not null default 'service_scheduler',
+  scheduled_for timestamptz,
+  training_run_id bigint references service_metric_training_runs(id),
+  activation_event_id bigint,
+  precheck jsonb not null default '{}',
+  activation_result jsonb not null default '{}',
+  error text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists model_training_scheduler_runs_created_idx
+  on model_training_scheduler_runs (created_at desc);
+
+create index if not exists model_training_scheduler_runs_model_idx
+  on model_training_scheduler_runs (model_version, status, created_at desc);
+
 create table if not exists service_metric_models (
   id bigserial primary key,
   service_id text not null references services(service_id),
@@ -193,6 +227,23 @@ create unique index if not exists service_metric_models_unique_idx
 
 create index if not exists service_metric_models_active_idx
   on service_metric_models (service_id, metric_name, active, created_at desc);
+
+create table if not exists model_activation_events (
+  id bigserial primary key,
+  model_version text not null,
+  action text not null,
+  status text not null,
+  previous_model_version text,
+  policy jsonb not null default '{}',
+  decision jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists model_activation_events_created_idx
+  on model_activation_events (created_at desc);
+
+create index if not exists model_activation_events_model_idx
+  on model_activation_events (model_version, created_at desc);
 
 create table if not exists service_metric_model_buckets (
   id bigserial primary key,
@@ -253,6 +304,25 @@ create table if not exists risk_feedback_labels (
 
 create index if not exists risk_feedback_labels_service_time_idx
   on risk_feedback_labels (service_id, created_at desc);
+
+create table if not exists risk_calibration_rules (
+  id bigserial primary key,
+  service_id text not null references services(service_id),
+  metric_name text,
+  evidence_source text,
+  risk_version text not null default 'risk-v2',
+  model_version text,
+  weight_multiplier numeric not null default 1.0,
+  points_delta numeric not null default 0.0,
+  enabled boolean not null default true,
+  generated_by text not null default 'feedback-calibration-v1',
+  reason text,
+  stats jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists risk_calibration_rules_lookup_idx
+  on risk_calibration_rules (service_id, risk_version, enabled, created_at desc);
 
 create table if not exists anomaly_windows (
   id bigserial primary key,

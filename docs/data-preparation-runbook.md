@@ -234,6 +234,30 @@ python3 scripts/collect_windows.py \
 
 GitHub 采集依赖 `gh api`。未安装或未认证时，collector 会把错误写入 `data_quality.errors`，不会中断 Prometheus 数据写入。
 
+Kubernetes historical event backfill should not use the bulk New Relic /
+Prometheus collector, because that collector intentionally skips Kubernetes.
+Use the VictoriaLogs-only backfill script to update existing windows:
+
+```bash
+python3 scripts/backfill_kubernetes_events.py \
+  --days 30 \
+  --victorialogs-url http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427 \
+  --victorialogs-kubernetes-events-query-template \
+  'log_type:k8s_events namespace:{namespace} name:~"{workload_name}-.+"'
+```
+
+This rewrites `service_metric_windows.kubernetes.status` from `mapped` or
+`error` to `events_only`, writes zero or non-zero event count fields, and removes
+`kubernetes_events` from `data_quality.missing_sources`. After this backfill,
+retrain and activate the dynamic baseline so Kubernetes event metrics are
+included in active ML residual scoring. VictoriaLogs is currently reachable only
+through the internal ELB above; the backfill client bypasses local HTTP proxy
+settings so the ELB is reached directly. The default mode downloads raw event
+rows and deduplicates repeated Kubernetes Event snapshots by `metadata.uid`.
+Use `--aggregate-events` only for fast exploratory checks; aggregate mode uses
+`/select/logsql/hits` grouped by event `reason` and cannot deduplicate repeated
+Event snapshots.
+
 Kubernetes inspect 采集依赖本机 `kubectl` 和只读 kubeconfig 权限。collector 会执行：
 
 ```bash

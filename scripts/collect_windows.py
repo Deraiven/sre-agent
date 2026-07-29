@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -469,8 +470,14 @@ def victorialogs_query(base_url: str, query: str, start: datetime, end: datetime
     if tenant:
         params["tenant"] = tenant
     request = urllib.request.Request(endpoint + "?" + urllib.parse.urlencode(params))
-    with urllib.request.urlopen(request, timeout=20) as response:
-        body = response.read().decode("utf-8")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=20) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        raise
 
     rows: list[dict] = []
     stripped = body.strip()
@@ -502,6 +509,11 @@ def normalize_victorialogs_kubernetes_event(row: dict) -> dict:
     parsed_ts = parse_kubernetes_time(str(ts)) if ts else None
     return {
         "timestamp": format_time(parsed_ts) if parsed_ts else None,
+        "uid": first_present(row, ("metadata.uid", "uid", "event_uid")),
+        "involved_uid": first_present(row, ("involvedObject.uid", "involved_uid", "object_uid")),
+        "first_timestamp": first_present(row, ("firstTimestamp", "eventTime", "metadata.creationTimestamp")),
+        "last_timestamp": first_present(row, ("lastTimestamp",)),
+        "resource_version": first_present(row, ("metadata.resourceVersion", "resourceVersion")),
         "reason": first_present(row, ("reason", "event_reason", "kubernetes_reason", "k8s_event_reason")),
         "type": first_present(row, ("type", "level", "event_type", "kubernetes_type", "k8s_event_type")),
         "message": first_present(row, ("message", "_msg", "msg", "log", "event_message")),
@@ -558,27 +570,66 @@ def collect_victorialogs_kubernetes_events(
     return events
 
 
+def _event_count(event: dict) -> int:
+    try:
+        count = int(event.get("count") or 1)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, count)
+
+
+def _event_dedupe_key(event: dict) -> tuple:
+    uid = event.get("uid")
+    if uid:
+        return ("uid", uid)
+    return (
+        "fallback",
+        event.get("involved_uid"),
+        event.get("involved_name"),
+        event.get("reason"),
+        event.get("message"),
+        event.get("first_timestamp") or event.get("timestamp"),
+    )
+
+
+def dedupe_kubernetes_events(events: list[dict]) -> list[dict]:
+    by_key: dict[tuple, dict] = {}
+    for event in events:
+        key = _event_dedupe_key(event)
+        existing = by_key.get(key)
+        if not existing or _event_count(event) >= _event_count(existing):
+            by_key[key] = event
+    return list(by_key.values())
+
+
 def kubernetes_event_counts(events: list[dict]) -> dict[str, int]:
-    unhealthy_events = [event for event in events if event.get("reason") == "Unhealthy"]
-    failed_scheduling_events = [event for event in events if event.get("reason") == "FailedScheduling"]
-    killing_events = [event for event in events if event.get("reason") == "Killing"]
+    unique_events = dedupe_kubernetes_events(events)
+
+    def weighted_count(matching_events: list[dict]) -> int:
+        return sum(_event_count(event) for event in matching_events)
+
+    unhealthy_events = [event for event in unique_events if event.get("reason") == "Unhealthy"]
+    failed_scheduling_events = [event for event in unique_events if event.get("reason") == "FailedScheduling"]
+    killing_events = [event for event in unique_events if event.get("reason") == "Killing"]
     image_pull_failure_events = [
         event
-        for event in events
+        for event in unique_events
         if event.get("reason") in {"Failed", "BackOff", "ErrImagePull", "ImagePullBackOff"}
         and "pull" in (event.get("message") or "").lower()
     ]
     oom_killed_events = [
         event
-        for event in events
+        for event in unique_events
         if "oomkilled" in f"{event.get('reason') or ''} {event.get('message') or ''}".lower()
     ]
     return {
-        "probe_failure_count": len(unhealthy_events),
-        "failed_scheduling_count": len(failed_scheduling_events),
-        "killing_event_count": len(killing_events),
-        "image_pull_failure_count": len(image_pull_failure_events),
-        "oom_killed_count": len(oom_killed_events),
+        "event_rows": len(events),
+        "unique_event_count": len(unique_events),
+        "probe_failure_count": weighted_count(unhealthy_events),
+        "failed_scheduling_count": weighted_count(failed_scheduling_events),
+        "killing_event_count": weighted_count(killing_events),
+        "image_pull_failure_count": weighted_count(image_pull_failure_events),
+        "oom_killed_count": weighted_count(oom_killed_events),
     }
 
 
@@ -615,9 +666,8 @@ def collect_kubernetes_events_fallback(
         errors.append({"source": "victorialogs", "signal": "kubernetes_events", "error": str(exc)})
         return {"status": "error", **base, "events_collected": False, "events_provider": "victorialogs"}, errors
 
-    status = "events_only" if events else "partial"
     return {
-        "status": status,
+        "status": "events_only",
         **base,
         **kubernetes_event_counts(events),
         "events": events,
@@ -690,6 +740,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
         pods = pods_payload.get("items", [])
         pod_names = {pod.get("metadata", {}).get("name") for pod in pods if pod.get("metadata", {}).get("name")}
         events = []
+        event_source_failed = False
         if not args.skip_kubernetes_events:
             provider = args.kubernetes_events_provider
             can_query_victorialogs = bool(args.victorialogs_url and args.victorialogs_kubernetes_events_query_template)
@@ -709,17 +760,23 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
                 except Exception as exc:  # noqa: BLE001 - event source is best-effort.
                     errors.append({"source": "victorialogs", "signal": "kubernetes_events", "error": str(exc)})
                     if provider == "victorialogs":
+                        event_source_failed = True
                         events = []
                     else:
                         provider = "kubectl"
             if provider == "kubectl" or (provider == "auto" and not can_query_victorialogs):
-                events_payload = kubectl_json(
-                    ["get", "events", "-n", namespace, "-o", "json"],
-                    context,
-                    kubeconfig,
-                    proxy_url,
-                    args.kubectl_timeout_seconds,
-                )
+                try:
+                    events_payload = kubectl_json(
+                        ["get", "events", "-n", namespace, "-o", "json"],
+                        context,
+                        kubeconfig,
+                        proxy_url,
+                        args.kubectl_timeout_seconds,
+                    )
+                except Exception as exc:  # noqa: BLE001 - inspect data is still useful without events.
+                    event_source_failed = True
+                    errors.append({"source": "kubernetes", "signal": "events", "error": str(exc)})
+                    events_payload = {"items": []}
                 for event in events_payload.get("items", []):
                     involved = event.get("involvedObject", {})
                     involved_name = involved.get("name")
@@ -787,7 +844,7 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
         )
 
         return {
-            "status": "collected",
+            "status": "partial" if event_source_failed else "collected",
             **base,
             "context": context,
             "selector": selector,
@@ -805,6 +862,8 @@ def collect_kubernetes(plan: dict, start: datetime, end: datetime, args: argpars
             "failed_scheduling_count": event_counts["failed_scheduling_count"],
             "killing_event_count": event_counts["killing_event_count"],
             "image_pull_failure_count": event_counts["image_pull_failure_count"],
+            "event_rows": event_counts["event_rows"],
+            "unique_event_count": event_counts["unique_event_count"],
             "waiting_reasons": waiting_reasons,
             "pods": pod_summaries,
             "events": events,
