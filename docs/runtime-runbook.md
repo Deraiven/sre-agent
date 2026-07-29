@@ -264,14 +264,50 @@ Kubernetes events can come from either the Kubernetes API or VictoriaLogs. Set
 VictoriaLogs rows into the existing `kubernetes.events` shape and reuses the
 same `probe_failure_count`, `failed_scheduling_count`, `killing_event_count`,
 and `image_pull_failure_count` feature fields. If kubectl workload/pod inspect
-times out but VictoriaLogs events are available, the row is written with
-`kubernetes.status=events_only`. In that mode risk and inspect only use event
-signals, not replicas, pod phase, current restart count, or rollout state.
+times out but the VictoriaLogs fallback query succeeds, the row is written with
+`kubernetes.status=events_only`; this includes the normal zero-event case, where
+all event count fields are written as `0`. If workload/pod inspect succeeds but
+only the event source fails, the row is written with `kubernetes.status=partial`
+and keeps replica/pod state while writing event counts as `0`. In
+`events_only` mode risk and inspect only use event signals, not replicas, pod
+phase, current restart count, or rollout state.
+Production VictoriaLogs is currently available through the internal ELB
+`http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427`;
+the former public URL is no longer usable. The collector bypasses local HTTP
+proxy settings for VictoriaLogs calls so the internal ELB is reached directly.
 
 For the current `pro` VictoriaLogs stream, Kubernetes event rows use fields like
 `log_type=k8s_events`, `namespace=pro`, `kind=Pod`, `name=<pod-name>`,
 `reason`, `level`, `count`, `_time`, and `_msg`. The default template filters by
 namespace and pod-name prefix derived from the service workload name.
+Kubernetes Event rows are deduplicated by `metadata.uid` before they become
+feature counts. If the UID is unavailable, the collector falls back to
+`involvedObject.uid/name + reason + message + firstTimestamp`. The payload keeps
+both `event_rows` and `unique_event_count` so reviewers can identify repeated
+VictoriaLogs snapshots. Drift and risk scoring suppress historical aggregate
+event rows that have `event_rows` but no `unique_event_count`; refresh those
+windows with the targeted Kubernetes events backfill before treating probe
+counts as incident evidence.
+
+Historical bulk backfills skip Kubernetes by design. To fill Kubernetes event
+counts for existing 15m windows without running kubectl for every historical
+window, use the VictoriaLogs-only backfill script:
+
+```bash
+python3 scripts/backfill_kubernetes_events.py \
+  --days 30 \
+  --victorialogs-url http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427 \
+  --victorialogs-kubernetes-events-query-template \
+  'log_type:k8s_events namespace:{namespace} name:~"{workload_name}-.+"'
+```
+
+The script rewrites selected `mapped`/`error` Kubernetes placeholders to
+`events_only`, removes `kubernetes_events` from `data_quality.missing_sources`,
+and preserves New Relic, Prometheus, and GitHub fields. The default mode
+downloads raw event rows and deduplicates repeated Kubernetes Event snapshots.
+Use `--aggregate-events` only when you intentionally want the faster
+VictoriaLogs `/select/logsql/hits` grouped by event `reason`; aggregate mode
+cannot deduplicate repeated Event snapshots.
 
 ## Baseline And Anomaly Operations
 
@@ -369,6 +405,7 @@ versions.
 | `POST /risk/feedback` | Store false positive, false negative, or confirmed incident labels |
 | `GET /risk/feedback` | List recent feedback labels |
 | `GET /risk/feedback/candidates` | List high-risk windows that need human feedback review |
+| `GET /risk/feedback/review_plan` | Show the daily feedback review quota, progress, label gaps, and candidate list |
 | `GET /risk/feedback/report` | Summarize feedback by service and label type |
 | `POST /risk/calibration/generate` | Generate enabled calibration rules from feedback labels |
 | `GET /risk/calibration/rules` | List active or inactive calibration rules |
@@ -440,13 +477,41 @@ curl -X POST http://127.0.0.1:8080/models/rollback \
 
 Feedback-aware calibration:
 
-1. Pull high-risk windows that need human review:
+Risk feedback candidates intentionally filter common noisy evidence before a
+human review is requested:
+
+- New Relic error-rate evidence must have estimated `error_count >= 10`,
+  `error_rate >= 0.05%`, and at least `0.05` percentage-point delta over the
+  selected baseline.
+- New Relic latency p95 evidence must have `request_count >= 100` and
+  `latency_p95_ms >= 200`.
+- New Relic latency p99 evidence must have `request_count >= 300` and
+  `latency_p99_ms >= 500`.
+- Prometheus resource and traffic metrics are context evidence. They are capped
+  at 12 points per evidence item and should not be used alone as a root cause.
+- `/models/drift` returns `qualified_sample_count`, `suppressed_sample_count`,
+  `suppressed_counts`, and `suppressed_examples` so reviewers can see which
+  low-sample or low-absolute-value windows were ignored.
+
+1. Check the daily feedback review plan. The default quota is 5 reviewed risk
+   windows per Asia/Shanghai day. Increase it temporarily when calibration data
+   is sparse or after a noisy alert period:
+
+   ```bash
+   curl 'http://127.0.0.1:8080/risk/feedback/review_plan?daily_quota=5&lookback_hours=24&min_score=50&limit=20'
+   ```
+
+   The response reports today's completed labels, remaining review count, the
+   30-day label distribution, calibration blockers, and the highest-priority
+   candidates to review next.
+
+2. Pull high-risk windows that need human review:
 
    ```bash
    curl 'http://127.0.0.1:8080/risk/feedback/candidates?lookback_hours=6&min_score=50&limit=20'
    ```
 
-2. Submit labels after reviewing a candidate window:
+3. Submit labels after reviewing a candidate window:
 
    ```bash
    curl -X POST http://127.0.0.1:8080/risk/feedback \
@@ -469,13 +534,13 @@ Feedback-aware calibration:
      }'
    ```
 
-3. Review label distribution:
+4. Review label distribution:
 
    ```bash
    curl 'http://127.0.0.1:8080/risk/feedback/report?days=30'
    ```
 
-4. Generate calibration rules:
+5. Generate calibration rules:
 
    ```bash
    curl -X POST http://127.0.0.1:8080/risk/calibration/generate \
@@ -483,8 +548,18 @@ Feedback-aware calibration:
      -d '{"days":30,"min_labels":2,"activate":true}'
    ```
 
-5. Verify `/risk/score` returns `risk_calibration.status=active` and evidence
+6. Verify `/risk/score` returns `risk_calibration.status=active` and evidence
    items include `calibration_rules` when a rule matched.
+
+Recommended operating rule:
+
+- Review at least 5 candidates every working day until the last 30 days have at
+  least 20 reviewed labels and at least one `false_negative`.
+- Keep the mix balanced: confirmed incidents validate risk evidence, false
+  positives dampen noisy evidence, and false negatives teach the agent what it
+  missed.
+- Treat generated calibration rules as experimental until recurring
+  `service_id + metric_name + evidence_source` patterns have at least 5 labels.
 
 Freshness statuses:
 
@@ -498,8 +573,13 @@ Freshness statuses:
 Drift statuses:
 
 - `stable`: recent windows are still represented by the active seasonal buckets.
-- `drift_warning`: p95 breach rate is at least 20% or MAD p95 is at least 4.
-- `drift_high`: p99 breach rate is at least 10% or MAD p95 is at least 6.
+- `drift_warning`: recent windows show sustained deviation, but not enough
+  primary signal movement to treat the model as clearly invalid.
+- `drift_high`: at least two primary metrics are high, or one primary metric is
+  high with broad context-metric drift.
+- Primary metrics are New Relic error/latency and Kubernetes event metrics.
+  Traffic and Prometheus resource/network metrics are context signals; they can
+  raise warning, but should not by themselves mark the service as high drift.
 - `insufficient_samples`: not enough recent samples for a reliable drift read.
 - `no_active_model`: service has no active model.
 

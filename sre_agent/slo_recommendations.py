@@ -22,6 +22,7 @@ LOCALIZED_SPIKE_REVIEW_SERVICES = {
 }
 EDGE_JOB_SERVICES = {
     "backoffice-migrate-jobs",
+    "backoffice-scheduled-jobs",
     "core-event-consumer-zendesk",
 }
 LOW_TRAFFIC_PROVISIONAL_SLO_SERVICES = {
@@ -116,10 +117,21 @@ def load_slo_candidates(
             items=", ".join(sql_literal(service_id) for service_id in service_ids)
         )
     sql = f"""
-with params as (
+with raw_params as (
+  select coalesce(
+    (
+      select max(window_end)
+      from service_metric_windows
+      where window_size = {sql_literal(window_size)}
+    ),
+    date_trunc('minute', now())
+  ) as until
+),
+params as (
   select
-    date_trunc('minute', now()) - interval '{int(days)} days' as since,
-    date_trunc('minute', now()) as until
+    raw_params.until - interval '{int(days)} days' as since,
+    raw_params.until as until
+  from raw_params
 ),
 service_scope as (
   select s.service_id, s.description, s.owner, s.tags

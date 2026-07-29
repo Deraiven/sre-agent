@@ -1208,9 +1208,16 @@ from (
             try:
                 next_run = self._next_model_training_time()
                 self.next_model_training_at = format_time(next_run)
-                wait_seconds = max(0.0, (next_run - utc_now()).total_seconds())
-                if self._stop.wait(wait_seconds):
-                    return
+                while not self._stop.is_set():
+                    wait_seconds = (next_run - utc_now()).total_seconds()
+                    if wait_seconds <= 0:
+                        break
+                    # Poll wall-clock time instead of one long Event.wait().
+                    # Long waits can remain asleep across local laptop sleep/wake,
+                    # leaving next_model_training_at in the past while the thread
+                    # still appears healthy.
+                    if self._stop.wait(min(wait_seconds, 60.0)):
+                        return
                 self.last_model_training_check_at = format_time(utc_now())
                 self.run_model_training_once(scheduled_for=next_run)
             except Exception as exc:  # noqa: BLE001 - keep scheduler alive.

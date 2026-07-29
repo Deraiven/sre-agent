@@ -13,13 +13,17 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>exec /opt/miniconda3/bin/python3 -m sre_agent.service --host 127.0.0.1 --port 8080</string>
+    <string>if [ -f /Users/storehub/.credential ]; then key="$(awk -F= '/^(NEW_RELIC_API_KEY|newrelic_api_key)=/ {print $2; exit}' /Users/storehub/.credential)"; if [ -n "$key" ]; then export NEW_RELIC_API_KEY="$key"; fi; fi; exec /opt/miniconda3/bin/python3 -m sre_agent.service --host 127.0.0.1 --port 8080</string>
   </array>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>DATABASE_URL</key>
     <string>postgresql://sre_agent:sre_agent@localhost:5432/sre_agent</string>
+    <key>PROMETHEUS_URL</key>
+    <string>https://prometheus.pro.mymyhub.com</string>
+    <key>NEW_RELIC_GRAPHQL_URL</key>
+    <string>https://api.newrelic.com/graphql</string>
     <key>SRE_AGENT_RUNNER_ENABLED</key>
     <string>true</string>
     <key>SRE_AGENT_RUNNER_INTERVAL_SECONDS</key>
@@ -32,10 +36,26 @@
     <string>24</string>
     <key>SRE_AGENT_GAP_MAX_WINDOWS_PER_RUN</key>
     <string>8</string>
+    <key>SRE_AGENT_MODEL_TRAINING_SCHEDULER_ENABLED</key>
+    <string>true</string>
+    <key>SRE_AGENT_MODEL_TRAINING_DAILY_AT</key>
+    <string>04:00</string>
+    <key>SRE_AGENT_MODEL_TRAINING_TIMEZONE</key>
+    <string>Asia/Shanghai</string>
+    <key>SRE_AGENT_MODEL_TRAINING_DAYS</key>
+    <string>30</string>
+    <key>SRE_AGENT_MODEL_TRAINING_MIN_COVERAGE_PCT</key>
+    <string>95</string>
     <key>KUBECTL_AWS_PROFILE</key>
     <string>pro</string>
     <key>KUBECTL_PROXY_URL</key>
     <string>socks5://127.0.0.1:1080</string>
+    <key>SRE_AGENT_KUBERNETES_EVENTS_PROVIDER</key>
+    <string>auto</string>
+    <key>VICTORIALOGS_URL</key>
+    <string>http://k8s-default-victoria-d4f3374ede-74ab6236b3b513dc.elb.ap-southeast-1.amazonaws.com:8427</string>
+    <key>VICTORIALOGS_KUBERNETES_EVENTS_QUERY_TEMPLATE</key>
+    <string>log_type:k8s_events namespace:{namespace} name:~"{workload_name}-.+"</string>
   </dict>
 
   <key>KeepAlive</key>

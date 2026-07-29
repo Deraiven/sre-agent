@@ -1,6 +1,6 @@
 # SRE Agent TODO
 
-Updated: 2026-07-03
+Updated: 2026-07-29
 
 This file tracks known limitations, discovered issues, and next implementation
 work for the SRE Agent. Keep it current when behavior, config, or docs change.
@@ -15,7 +15,7 @@ work for the SRE Agent. Keep it current when behavior, config, or docs change.
 | Kubernetes inspect | Working locally through tunnel | Should move into `storehub-pro` with RBAC to remove tunnel/VPN dependency |
 | Service catalog | Mostly complete | 51 services mapped; owners/SLOs still need human review |
 | SLO recommendations | Reviewed | `slo-rec-v1` wrote 51 recommendations from the last 30d of 15m windows; 46 are approved, 2 provisional, 2 domain-specific, and 1 reliability-roadmap item |
-| Dynamic service baselines | Working | Rule-based seasonal baselines exist; `seasonal-quantile-v4-20260703` is active for 51 services / 507 models |
+| Dynamic service baselines | Working | Rule-based seasonal baselines exist; `seasonal-quantile-auto-202607282000` is active for 51 services / 710 models / 14 metrics |
 | Transaction baselines | Done, manual refresh | `transaction_baselines` currently covers 48 services, 1393 rows total |
 | Risk scoring v2 | Working | Combines recent 15m windows, active ML seasonal residual evidence, calibration-rule hooks, and persisted trace evidence |
 | Incident inspect v2 | Working | Supports sync/async inspect, persisted results, summary, timeline, and feedback |
@@ -27,7 +27,7 @@ These items are the core of the SRE Agent product, not optional polish.
 
 | Priority | Task | Status | Target outcome |
 | --- | --- | --- | --- |
-| P0 | Generate SLO recommendations | reviewed | 51 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
+| P0 | Generate SLO recommendations | reviewed | 52 services have reviewed availability/error-rate/p95/p99 candidates or documented domain-specific follow-up in `slo_recommendations` |
 | P0 | ML-driven dynamic baseline per service/metric | active for eligible services | Learn each service's periodic behavior and automatically produce expected p50/p95/p99/residual ranges |
 | P0 | Baseline model quality report | working | Shows coverage/readiness, model freshness, and drift via `/models/quality`, `/models/freshness`, and `/models/drift` |
 | P0 | Risk evaluator based on dynamic baseline residuals | working | Risk score is based on deviation from learned seasonal behavior, not fixed thresholds |
@@ -102,23 +102,39 @@ Framework completed:
 
 Current activated model state:
 
-- `seasonal-quantile-v4-20260703` is active.
-- 507 service/metric models are active across 51 services.
+- `seasonal-quantile-auto-202607282000` is active.
+- 710 service/metric models are active across 51 services and 14 metrics.
+- Kubernetes event metrics are active for all 51 services:
+  `kubernetes.probe_failure_count`, `kubernetes.failed_scheduling_count`,
+  `kubernetes.image_pull_failure_count`, and `kubernetes.oom_killed_count`.
+- Recent 30d Kubernetes placeholders were backfilled from the internal
+  VictoriaLogs ELB with `scripts/backfill_kubernetes_events.py`; current rows
+  are `events_only` instead of bulk-backfill `mapped` placeholders. Event
+  counts are now expected to come from raw VictoriaLogs event rows so repeated
+  Kubernetes Event snapshots can be deduplicated by `metadata.uid`.
 - Activation and rollback are now API-driven and audited in
   `model_activation_events`.
 - `/risk/score` loads active seasonal buckets in this fallback order:
   `weekday_hour_slot`, `hour_slot`, `weekday_hour`, `hour`, `global`.
 - Risk evidence now includes residual, p95/p99 deviation, robust MAD score,
   model version, bucket scope, sample count, and confidence.
-- Risk feedback currently has 7 reviewed labels: 5 confirmed incidents, 2 false
-  positives, and 0 false negatives. `risk_calibration_rules` has not generated
-  trusted enabled rules yet.
+- Risk feedback currently has 12 reviewed labels: 9 confirmed incidents, 3
+  false positives, and 0 false negatives. `/risk/feedback/review_plan` now
+  enforces a daily review quota and reports calibration blockers, but
+  `risk_calibration_rules` has not generated trusted enabled rules yet.
+- Drift/risk noise suppression is in place for near-zero error rates,
+  low-sample latency percentiles, undeduplicated Kubernetes Event aggregates,
+  and Prometheus/traffic context evidence. `/models/drift` reports qualified and
+  suppressed sample counts so reviewers can see why a window did or did not
+  become actionable.
 
 Remaining P0 work:
 
-- Generate and validate calibration rules after enough reviewed
-  `risk_feedback_labels` exist, then verify matched evidence changes risk in
-  the expected direction.
+- Complete the daily feedback review quota until enough reviewed
+  `risk_feedback_labels` exist for trusted calibration rules, then verify
+  matched evidence changes risk in the expected direction.
+- Keep the VictoriaLogs internal ELB URL configured for realtime and historical
+  event fallback; the former public URL is no longer usable.
 - Enable and monitor the service-owned retraining scheduler in production:
   configure the daily window, data-quality thresholds, activation policy, alert
   on blocked/error scheduler runs, and decide whether Kubernetes should run it
@@ -158,6 +174,10 @@ Implementation notes:
   sufficient.
 - Extend risk scoring so domain SLI deviations contribute evidence and points,
   but keep request count/rpm as traffic context.
+- `backoffice-scheduled-jobs` is now mapped to the correct New Relic app
+  (`BackOffice-scheduled-jobs` / `1058544253`) and its SLO recommendation is
+  approved as `edge_service`; HTTP Transaction availability/latency must not be
+  treated as the final SLO for this scheduled-job service.
 
 Acceptance criteria:
 

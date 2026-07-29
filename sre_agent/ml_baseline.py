@@ -33,9 +33,22 @@ FEATURE_SPEC = {
 
 FRESHNESS_WARNING_HOURS = 24
 FRESHNESS_CRITICAL_HOURS = 72
-DRIFT_WARNING_P95_BREACH_RATE = 0.20
-DRIFT_HIGH_P99_BREACH_RATE = 0.10
-DRIFT_CRITICAL_MAD_P95 = 6.0
+DRIFT_WARNING_P95_BREACH_RATE = 0.35
+DRIFT_HIGH_P99_BREACH_RATE = 0.35
+DRIFT_WARNING_MAD_P95 = 6.0
+DRIFT_CRITICAL_MAD_P95 = 12.0
+DRIFT_CONTEXT_WARNING_P95_BREACH_RATE = 0.35
+DRIFT_CONTEXT_HIGH_P99_BREACH_RATE = 0.35
+DRIFT_CONTEXT_WARNING_MAD_P95 = 8.0
+DRIFT_CONTEXT_CRITICAL_MAD_P95 = 12.0
+DRIFT_ERROR_RATE_MIN_COUNT = 10.0
+DRIFT_ERROR_RATE_MIN_PERCENT = 0.05
+DRIFT_ERROR_RATE_MIN_DELTA_PERCENT = 0.05
+DRIFT_LATENCY_P95_MIN_REQUESTS = 100.0
+DRIFT_LATENCY_P95_MIN_MS = 200.0
+DRIFT_LATENCY_P99_MIN_REQUESTS = 300.0
+DRIFT_LATENCY_P99_MIN_MS = 500.0
+KUBERNETES_OK_STATUSES = ("collected", "events_only", "partial", "missing")
 
 DEFAULT_ACTIVATION_POLICY = {
     "min_service_coverage_pct": 95.0,
@@ -136,7 +149,7 @@ actual as (
          min(w.window_start) as earliest,
          max(w.window_start) as latest,
          count(*) filter (where w.newrelic->>'status' = 'collected')::int as newrelic_rows,
-         count(*) filter (where coalesce(w.kubernetes->>'status', '') = 'collected')::int as kubernetes_rows,
+         count(*) filter (where coalesce(w.kubernetes->>'status', '') in {KUBERNETES_OK_STATUSES})::int as kubernetes_rows,
          count(*) filter (where coalesce(w.data_quality->'errors', '[]'::jsonb) <> '[]'::jsonb)::int as data_quality_error_rows
   from service_metric_windows w
   where w.window_size = {sql_literal(window_size)}
@@ -229,9 +242,11 @@ def model_freshness_report(
     window_size: str = "15m",
     warning_hours: int = FRESHNESS_WARNING_HOURS,
     critical_hours: int = FRESHNESS_CRITICAL_HOURS,
+    active_only: bool = True,
 ) -> dict[str, Any]:
     service_filter = _service_filter(service_ids)
     model_version_filter = f"and model_version = {sql_literal(model_version)}" if model_version else ""
+    active_filter = "and active" if active_only else ""
     sql = f"""
 with service_scope as (
   select s.service_id
@@ -254,7 +269,8 @@ active_models as (
          activated_at,
          created_at
   from service_metric_models
-  where active
+  where true
+    {active_filter}
     {model_version_filter}
     and service_id in (select service_id from service_scope)
 )
@@ -324,6 +340,7 @@ from (
     return {
         "model_version": model_version,
         "window_size": window_size,
+        "active_only": active_only,
         "warning_hours": warning_hours,
         "critical_hours": critical_hours,
         "service_count": len(services),
@@ -339,33 +356,115 @@ def _drift_status(
     p99_breach_rate: float,
     mad_score_p95: float | None,
     min_samples: int,
+    metric_impact: str = "primary",
 ) -> str:
     if sample_count < min_samples:
         return "insufficient_samples"
-    if (mad_score_p95 is not None and mad_score_p95 >= DRIFT_CRITICAL_MAD_P95) or p99_breach_rate >= DRIFT_HIGH_P99_BREACH_RATE:
+    if metric_impact == "context":
+        if (
+            mad_score_p95 is not None
+            and mad_score_p95 >= DRIFT_CONTEXT_CRITICAL_MAD_P95
+        ) or p99_breach_rate >= DRIFT_CONTEXT_HIGH_P99_BREACH_RATE:
+            return "drift_high"
+        if (
+            p95_breach_rate >= DRIFT_CONTEXT_WARNING_P95_BREACH_RATE
+            or (mad_score_p95 is not None and mad_score_p95 >= DRIFT_CONTEXT_WARNING_MAD_P95)
+        ):
+            return "drift_warning"
+        return "stable"
+    if (
+        mad_score_p95 is not None
+        and mad_score_p95 >= DRIFT_CRITICAL_MAD_P95
+    ) or p99_breach_rate >= DRIFT_HIGH_P99_BREACH_RATE:
         return "drift_high"
-    if p95_breach_rate >= DRIFT_WARNING_P95_BREACH_RATE or (mad_score_p95 is not None and mad_score_p95 >= 4.0):
+    if p95_breach_rate >= DRIFT_WARNING_P95_BREACH_RATE or (
+        mad_score_p95 is not None and mad_score_p95 >= DRIFT_WARNING_MAD_P95
+    ):
         return "drift_warning"
     return "stable"
 
 
+def _drift_metric_impact(metric_name: str) -> str:
+    if metric_name in {"newrelic.request_count", "newrelic.rpm"}:
+        return "context"
+    if metric_name.startswith("prometheus."):
+        return "context"
+    return "primary"
+
+
+def _drift_suppression_reason(metric_name: str, item: dict[str, Any]) -> str | None:
+    value = item.get("value")
+    request_count = float(item.get("newrelic_request_count") or 0)
+    if metric_name.startswith("kubernetes.") and item.get("kubernetes_event_rows") and item.get("kubernetes_unique_event_count") is None:
+        return "kubernetes_events_not_deduped"
+    if metric_name.startswith("newrelic.error_rate"):
+        error_rate = float(value or 0)
+        error_count = request_count * error_rate / 100.0
+        p95_deviation = item.get("p95_deviation")
+        p99_deviation = item.get("p99_deviation")
+        baseline_delta = max(
+            p95_deviation if isinstance(p95_deviation, (int, float)) else 0,
+            p99_deviation if isinstance(p99_deviation, (int, float)) else 0,
+        )
+        if error_count < DRIFT_ERROR_RATE_MIN_COUNT:
+            return "error_count_below_floor"
+        if error_rate < DRIFT_ERROR_RATE_MIN_PERCENT:
+            return "error_rate_below_floor"
+        if baseline_delta < DRIFT_ERROR_RATE_MIN_DELTA_PERCENT:
+            return "error_rate_delta_below_floor"
+    if metric_name == "newrelic.latency_p95_ms":
+        if request_count < DRIFT_LATENCY_P95_MIN_REQUESTS:
+            return "latency_p95_request_count_below_floor"
+        if isinstance(value, (int, float)) and value < DRIFT_LATENCY_P95_MIN_MS:
+            return "latency_p95_absolute_value_below_floor"
+    if metric_name == "newrelic.latency_p99_ms":
+        if request_count < DRIFT_LATENCY_P99_MIN_REQUESTS:
+            return "latency_p99_request_count_below_floor"
+        if isinstance(value, (int, float)) and value < DRIFT_LATENCY_P99_MIN_MS:
+            return "latency_p99_absolute_value_below_floor"
+    return None
+
+
 def _model_metric_drift(metric_name: str, values: list[dict[str, Any]], min_samples: int) -> dict[str, Any]:
     sample_count = len(values)
-    p95_breaches = [item for item in values if isinstance(item.get("p95_deviation"), (int, float)) and item["p95_deviation"] > 0]
-    p99_breaches = [item for item in values if isinstance(item.get("p99_deviation"), (int, float)) and item["p99_deviation"] > 0]
+    qualified_values = []
+    suppressed_counts: dict[str, int] = {}
+    for item in values:
+        reason = _drift_suppression_reason(metric_name, item)
+        if reason:
+            item["suppressed_reason"] = reason
+            suppressed_counts[reason] = suppressed_counts.get(reason, 0) + 1
+            continue
+        qualified_values.append(item)
+    qualified_sample_count = len(qualified_values)
+    p95_breaches = [
+        item
+        for item in qualified_values
+        if isinstance(item.get("p95_deviation"), (int, float)) and item["p95_deviation"] > 0
+    ]
+    p99_breaches = [
+        item
+        for item in qualified_values
+        if isinstance(item.get("p99_deviation"), (int, float)) and item["p99_deviation"] > 0
+    ]
     mad_scores = [
         item["robust_mad_score"]
-        for item in values
+        for item in qualified_values
         if isinstance(item.get("robust_mad_score"), (int, float)) and item["robust_mad_score"] > 0
     ]
-    residuals = [item["residual"] for item in values if isinstance(item.get("residual"), (int, float))]
+    residuals = [item["residual"] for item in qualified_values if isinstance(item.get("residual"), (int, float))]
     mad_score_p50 = percentile(mad_scores, 0.50) if mad_scores else None
     mad_score_p95 = percentile(mad_scores, 0.95) if mad_scores else None
-    p95_breach_rate = len(p95_breaches) / sample_count if sample_count else 0
-    p99_breach_rate = len(p99_breaches) / sample_count if sample_count else 0
+    p95_breach_rate = len(p95_breaches) / qualified_sample_count if qualified_sample_count else 0
+    p99_breach_rate = len(p99_breaches) / qualified_sample_count if qualified_sample_count else 0
+    metric_impact = _drift_metric_impact(metric_name)
     return {
         "metric_name": metric_name,
+        "metric_impact": metric_impact,
         "sample_count": sample_count,
+        "qualified_sample_count": qualified_sample_count,
+        "suppressed_sample_count": sample_count - qualified_sample_count,
+        "suppressed_counts": suppressed_counts,
         "p95_breach_count": len(p95_breaches),
         "p99_breach_count": len(p99_breaches),
         "p95_breach_rate": p95_breach_rate,
@@ -374,13 +473,68 @@ def _model_metric_drift(metric_name: str, values: list[dict[str, Any]], min_samp
         "mad_score_p95": mad_score_p95,
         "residual_p50": percentile(residuals, 0.50) if residuals else None,
         "residual_p95": percentile(residuals, 0.95) if residuals else None,
-        "status": _drift_status(sample_count, p95_breach_rate, p99_breach_rate, mad_score_p95, min_samples),
+        "status": _drift_status(
+            qualified_sample_count,
+            p95_breach_rate,
+            p99_breach_rate,
+            mad_score_p95,
+            min_samples,
+            metric_impact,
+        ),
         "top_examples": sorted(
-            values,
+            qualified_values,
+            key=lambda item: item.get("robust_mad_score") if isinstance(item.get("robust_mad_score"), (int, float)) else -1,
+            reverse=True,
+        )[:3],
+        "suppressed_examples": sorted(
+            [item for item in values if item.get("suppressed_reason")],
             key=lambda item: item.get("robust_mad_score") if isinstance(item.get("robust_mad_score"), (int, float)) else -1,
             reverse=True,
         )[:3],
     }
+
+
+def _service_drift_status(metrics: list[dict[str, Any]]) -> tuple[str, dict[str, int]]:
+    primary_high = 0
+    primary_warning = 0
+    context_high = 0
+    context_warning = 0
+    stable = 0
+    insufficient = 0
+    for metric in metrics:
+        status = metric["status"]
+        impact = metric.get("metric_impact", "primary")
+        if status == "stable":
+            stable += 1
+        elif status == "insufficient_samples":
+            insufficient += 1
+        elif impact == "context" and status == "drift_high":
+            context_high += 1
+        elif impact == "context" and status == "drift_warning":
+            context_warning += 1
+        elif status == "drift_high":
+            primary_high += 1
+        elif status == "drift_warning":
+            primary_warning += 1
+    counts = {
+        "primary_high": primary_high,
+        "primary_warning": primary_warning,
+        "context_high": context_high,
+        "context_warning": context_warning,
+        "stable": stable,
+        "insufficient_samples": insufficient,
+    }
+    if primary_high >= 2 or (primary_high >= 1 and context_high >= 5):
+        return "drift_high", counts
+    if primary_high >= 1 or primary_warning >= 2 or (primary_warning >= 1 and context_high >= 2):
+        return "drift_warning", counts
+    if context_high >= 4:
+        return "drift_warning", counts
+    if stable > 0 and primary_high == primary_warning == context_high == context_warning == 0:
+        return "stable", counts
+    if stable > 0:
+        return "partial", counts
+    return "insufficient_samples", counts
 
 
 def model_drift_report(
@@ -424,6 +578,16 @@ from (
         evaluated_points = 0
         for row in rows:
             window_start = parse_time(row["window_start"])
+            if not (since <= window_start < until):
+                continue
+            newrelic = row.get("newrelic") or {}
+            kubernetes = row.get("kubernetes") or {}
+            request_count = newrelic.get("request_count") or 0
+            error_rate_percent = newrelic.get("error_rate_percent") or 0
+            try:
+                error_count = float(request_count or 0) * float(error_rate_percent or 0) / 100.0
+            except (TypeError, ValueError):
+                error_count = 0.0
             for metric_name, value in extract_metrics(row).items():
                 candidates = model_bucket_candidates(model_buckets, metric_name, window_start)
                 if not candidates:
@@ -435,6 +599,11 @@ from (
                         "window_start": row["window_start"],
                         "window_end": row["window_end"],
                         "value": value,
+                        "newrelic_request_count": request_count,
+                        "newrelic_error_rate_percent": error_rate_percent,
+                        "newrelic_error_count_estimate": error_count,
+                        "kubernetes_event_rows": kubernetes.get("event_rows"),
+                        "kubernetes_unique_event_count": kubernetes.get("unique_event_count"),
                         "baseline_scope": selected["baseline_scope"],
                         "model_version": selected["model_version"],
                         "p95_deviation": selected["p95_deviation"],
@@ -447,16 +616,9 @@ from (
                 evaluated_points += 1
         metrics = [_model_metric_drift(metric_name, values, min_samples) for metric_name, values in by_metric.items()]
         service_status = "no_active_model" if not model_buckets else "insufficient_samples"
+        service_drift_counts: dict[str, int] = {}
         if metrics:
-            metric_statuses = {metric["status"] for metric in metrics}
-            if "drift_high" in metric_statuses:
-                service_status = "drift_high"
-            elif "drift_warning" in metric_statuses:
-                service_status = "drift_warning"
-            elif metric_statuses == {"stable"}:
-                service_status = "stable"
-            elif "stable" in metric_statuses:
-                service_status = "partial"
+            service_status, service_drift_counts = _service_drift_status(metrics)
         status_counts[service_status] = status_counts.get(service_status, 0) + 1
         service_reports.append(
             {
@@ -466,6 +628,7 @@ from (
                 "window_count": len(rows),
                 "evaluated_points": evaluated_points,
                 "active_metric_count": len(model_buckets),
+                "drift_metric_counts": service_drift_counts,
                 "metrics": sorted(metrics, key=lambda item: (item["status"], item["metric_name"])),
             }
         )
@@ -479,8 +642,25 @@ from (
         "active_only": active_only,
         "min_samples": min_samples,
         "policy": {
-            "drift_warning": f"p95 breach rate >= {DRIFT_WARNING_P95_BREACH_RATE:.0%} or MAD p95 >= 4",
-            "drift_high": f"p99 breach rate >= {DRIFT_HIGH_P99_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_CRITICAL_MAD_P95}",
+            "primary_metric_drift_warning": f"p95 breach rate >= {DRIFT_WARNING_P95_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_WARNING_MAD_P95}",
+            "primary_metric_drift_high": f"p99 breach rate >= {DRIFT_HIGH_P99_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_CRITICAL_MAD_P95}",
+            "context_metric_drift_warning": f"p95 breach rate >= {DRIFT_CONTEXT_WARNING_P95_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_CONTEXT_WARNING_MAD_P95}",
+            "context_metric_drift_high": f"p99 breach rate >= {DRIFT_CONTEXT_HIGH_P99_BREACH_RATE:.0%} or MAD p95 >= {DRIFT_CONTEXT_CRITICAL_MAD_P95}",
+            "error_rate_floor": (
+                f"error_count >= {DRIFT_ERROR_RATE_MIN_COUNT:.0f}, "
+                f"error_rate >= {DRIFT_ERROR_RATE_MIN_PERCENT:.2f}%, "
+                f"and baseline delta >= {DRIFT_ERROR_RATE_MIN_DELTA_PERCENT:.2f}pp"
+            ),
+            "latency_p95_floor": (
+                f"request_count >= {DRIFT_LATENCY_P95_MIN_REQUESTS:.0f} "
+                f"and latency_p95 >= {DRIFT_LATENCY_P95_MIN_MS:.0f}ms"
+            ),
+            "latency_p99_floor": (
+                f"request_count >= {DRIFT_LATENCY_P99_MIN_REQUESTS:.0f} "
+                f"and latency_p99 >= {DRIFT_LATENCY_P99_MIN_MS:.0f}ms"
+            ),
+            "service_drift_high": "at least 2 primary high metrics, or 1 primary high plus at least 5 context high metrics",
+            "service_drift_warning": "at least 1 primary high, 2 primary warning metrics, 1 primary warning plus 2 context high metrics, or at least 4 context high metrics",
         },
         "service_count": len(service_reports),
         "status_counts": status_counts,
@@ -651,6 +831,11 @@ from (
     round(coalesce(sum(rows), 0)::numeric / nullif((select expected_windows from expected) * greatest((select count(*) from service_scope), 1), 0) * 100, 2) as overall_coverage_pct,
     round(coalesce(sum(newrelic_collected_rows), 0)::numeric / nullif(coalesce(sum(rows), 0), 0) * 100, 2) as newrelic_success_pct,
     round(coalesce(sum(prometheus_ok_rows), 0)::numeric / nullif(coalesce(sum(rows), 0), 0) * 100, 2) as prometheus_success_pct,
+    round(
+      (coalesce(sum(rows), 0) - coalesce(sum(data_quality_error_rows), 0))::numeric
+      / nullif(coalesce(sum(rows), 0), 0) * 100,
+      2
+    ) as data_quality_success_pct,
     coalesce(sum(data_quality_error_rows), 0)::int as data_quality_error_rows,
     coalesce(max(extract(epoch from ({sql_literal(format_time(until))}::timestamptz - latest_window_end)) / 60.0), 999999) as max_latest_lag_minutes,
     coalesce(json_agg(row_to_json(ps) order by ps.service_id), '[]'::json) as services
@@ -670,7 +855,7 @@ from (
         when rows::numeric / nullif((select expected_windows from expected), 0) * 100 < {min_coverage_pct} then false
         when newrelic_collected_rows::numeric / nullif(rows, 0) * 100 < {min_source_success_pct} then false
         when prometheus_ok_rows::numeric / nullif(rows, 0) * 100 < {min_source_success_pct} then false
-        when data_quality_error_rows > 0 then false
+        when (rows - data_quality_error_rows)::numeric / nullif(rows, 0) * 100 < {min_source_success_pct} then false
         else true
       end as eligible
     from per_service
@@ -681,7 +866,9 @@ from (
     overall_coverage_pct = float(report.get("overall_coverage_pct") or 0)
     newrelic_success_pct = float(report.get("newrelic_success_pct") or 0)
     prometheus_success_pct = float(report.get("prometheus_success_pct") or 0)
-    max_lag = float(report.get("max_latest_lag_minutes") or 999999)
+    data_quality_success_pct = float(report.get("data_quality_success_pct") or 0)
+    raw_max_lag = report.get("max_latest_lag_minutes")
+    max_lag = float(raw_max_lag) if raw_max_lag is not None else 999999
     service_count = int(report.get("service_count") or 0)
     services = report.get("services") or []
     eligible_service_count = sum(1 for service in services if service.get("eligible"))
@@ -702,6 +889,12 @@ from (
             "name": "prometheus_success",
             "passed": prometheus_success_pct >= min_source_success_pct,
             "actual": prometheus_success_pct,
+            "expected": min_source_success_pct,
+        },
+        {
+            "name": "data_quality_success",
+            "passed": data_quality_success_pct >= min_source_success_pct,
+            "actual": data_quality_success_pct,
             "expected": min_source_success_pct,
         },
         {
@@ -840,6 +1033,21 @@ where id = {run_id};
             "training_run": get_training_run(database_url, run_id),
             "training_summary": {"trained_service_count": 0, "trained_model_count": 0, "bucket_count": 0},
         }
+    if activate:
+        psql_exec(
+            database_url,
+            """
+update service_metric_models
+set active = false,
+    status = case when status = 'active' then 'evaluated' else status end
+where active
+  and service_id in ({service_ids})
+  and metric_name in ({metric_names});
+""".format(
+                service_ids=", ".join(sql_literal(service_id) for service_id in selected_service_ids),
+                metric_names=", ".join(sql_literal(metric_name) for metric_name in metric_names),
+            ),
+        )
 
     psql_exec(
         database_url,
@@ -1297,7 +1505,8 @@ from (
     model_coverage_pct = _pct(model_count, max(expected_services, 1) * max(modeled_metrics, 1))
     avg_training_coverage_pct = float(inventory.get("avg_training_coverage_pct") or 0)
     min_training_coverage_pct = float(inventory.get("min_training_coverage_pct") or 0)
-    max_model_lag_hours = float(inventory.get("max_model_lag_hours") or 999999)
+    raw_max_model_lag_hours = inventory.get("max_model_lag_hours")
+    max_model_lag_hours = float(raw_max_model_lag_hours) if raw_max_model_lag_hours is not None else 999999
 
     freshness_report = model_freshness_report(
         database_url,
@@ -1305,6 +1514,7 @@ from (
         window_size=window_size,
         warning_hours=int(_policy_value(policy, "max_training_lag_hours")),
         critical_hours=int(_policy_value(policy, "max_training_lag_hours")) * 2,
+        active_only=False,
     )
     drift_report = model_drift_report(
         database_url,

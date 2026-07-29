@@ -31,6 +31,7 @@ from .intelligence import (
     mark_anomalies,
     risk_feedback_candidates,
     risk_feedback_report,
+    risk_feedback_review_plan,
     score_service_risk,
     utc_now,
 )
@@ -338,6 +339,23 @@ from (
                         lookback_hours=int((query.get("lookback_hours") or ["6"])[0]),
                         min_score=int((query.get("min_score") or ["50"])[0]),
                         limit=int((query.get("limit") or ["20"])[0]),
+                        baseline_version=(query.get("baseline_version") or ["baseline-v1"])[0],
+                    ),
+                )
+                return
+            if path == "/risk/feedback/review_plan":
+                service_ids = query.get("service_id")
+                self._send_json(
+                    HTTPStatus.OK,
+                    risk_feedback_review_plan(
+                        self.runner.config.database_url,
+                        service_ids=service_ids,
+                        daily_quota=int((query.get("daily_quota") or ["5"])[0]),
+                        lookback_hours=int((query.get("lookback_hours") or ["24"])[0]),
+                        min_score=int((query.get("min_score") or ["50"])[0]),
+                        limit=int((query.get("limit") or ["20"])[0]),
+                        days=int((query.get("days") or ["30"])[0]),
+                        timezone_name=(query.get("timezone") or ["Asia/Shanghai"])[0],
                         baseline_version=(query.get("baseline_version") or ["baseline-v1"])[0],
                     ),
                 )

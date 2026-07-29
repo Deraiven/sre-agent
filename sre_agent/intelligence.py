@@ -36,6 +36,13 @@ METRIC_NAMES = [
 
 WINDOW_SECONDS = {"5m": 300, "15m": 900, "1h": 3600}
 TRAFFIC_CONTEXT_METRICS = {"newrelic.request_count", "newrelic.rpm"}
+RISK_ERROR_RATE_MIN_COUNT = 10.0
+RISK_ERROR_RATE_MIN_PERCENT = 0.05
+RISK_ERROR_RATE_MIN_DELTA_PERCENT = 0.05
+RISK_LATENCY_P95_MIN_REQUESTS = 100.0
+RISK_LATENCY_P95_MIN_MS = 200.0
+RISK_LATENCY_P99_MIN_REQUESTS = 300.0
+RISK_LATENCY_P99_MIN_MS = 500.0
 RESOURCE_RATIO_THRESHOLDS = {
     "prometheus.cpu_usage.avg": (1.20, 1.40),
     "prometheus.memory_usage.avg": (1.20, 1.40),
@@ -405,6 +412,56 @@ def metric_baseline_comparison(metric_name: str, value: float, baseline: dict[st
     }
 
 
+def _window_risk_context(row: dict[str, Any]) -> dict[str, float]:
+    newrelic = row.get("newrelic") or {}
+    request_count = json_number(newrelic, "request_count") or 0.0
+    error_rate = json_number(newrelic, "error_rate_percent") or 0.0
+    return {
+        "newrelic_request_count": request_count,
+        "newrelic_error_rate_percent": error_rate,
+        "newrelic_error_count_estimate": request_count * error_rate / 100.0,
+    }
+
+
+def _risk_metric_impact(metric_name: str) -> str:
+    if metric_name in TRAFFIC_CONTEXT_METRICS or metric_name.startswith("prometheus."):
+        return "context"
+    return "primary"
+
+
+def _risk_evidence_suppression_reason(
+    metric_name: str,
+    value: float,
+    row: dict[str, Any],
+    baseline_delta: float | None,
+) -> str | None:
+    context = _window_risk_context(row)
+    request_count = context["newrelic_request_count"]
+    kubernetes = row.get("kubernetes") or {}
+    if metric_name.startswith("kubernetes.") and kubernetes.get("event_rows") and kubernetes.get("unique_event_count") is None:
+        return "kubernetes_events_not_deduped"
+    if metric_name.startswith("newrelic.error_rate"):
+        error_rate = float(value or 0)
+        error_count = context["newrelic_error_count_estimate"]
+        if error_count < RISK_ERROR_RATE_MIN_COUNT:
+            return "error_count_below_floor"
+        if error_rate < RISK_ERROR_RATE_MIN_PERCENT:
+            return "error_rate_below_floor"
+        if (baseline_delta or 0) < RISK_ERROR_RATE_MIN_DELTA_PERCENT:
+            return "error_rate_delta_below_floor"
+    if metric_name == "newrelic.latency_p95_ms":
+        if request_count < RISK_LATENCY_P95_MIN_REQUESTS:
+            return "latency_p95_request_count_below_floor"
+        if value < RISK_LATENCY_P95_MIN_MS:
+            return "latency_p95_absolute_value_below_floor"
+    if metric_name == "newrelic.latency_p99_ms":
+        if request_count < RISK_LATENCY_P99_MIN_REQUESTS:
+            return "latency_p99_request_count_below_floor"
+        if value < RISK_LATENCY_P99_MIN_MS:
+            return "latency_p99_absolute_value_below_floor"
+    return None
+
+
 def evaluate_window(
     row: dict[str, Any],
     baselines: dict[str, dict],
@@ -441,6 +498,14 @@ def evaluate_window(
         points = selected["weighted_points"]
         if points <= 0:
             continue
+        metric_impact = _risk_metric_impact(metric_name)
+        if metric_impact == "context":
+            points = min(points, 12)
+        baseline_reference = selected.get("baseline_reference_value")
+        baseline_delta = value - baseline_reference if isinstance(baseline_reference, (int, float)) else None
+        suppressed_reason = _risk_evidence_suppression_reason(metric_name, value, row, baseline_delta)
+        if suppressed_reason:
+            continue
         if metric_name.startswith("newrelic.error_rate"):
             anomaly_types.add("error_rate")
         elif "latency" in metric_name:
@@ -452,6 +517,7 @@ def evaluate_window(
             points += 8
         evidence_item = {
             "source": "rule_baseline",
+            "metric_impact": metric_impact,
             "metric": metric_name,
             "value": value,
             "baseline_p50": selected["baseline_p50"],
@@ -462,6 +528,7 @@ def evaluate_window(
             "baseline_sample_count": selected["baseline_sample_count"],
             "baseline_minute_slot": selected["baseline_minute_slot"],
             "baseline_reference_value": selected["baseline_reference_value"],
+            **_window_risk_context(row),
             "deviation_ratio": selected["deviation_ratio"],
             "deviation_type": selected["deviation_type"],
             "raw_points": selected["raw_points"],
@@ -1048,6 +1115,96 @@ from (
     }
 
 
+def risk_feedback_review_plan(
+    database_url: str,
+    service_ids: list[str] | None = None,
+    daily_quota: int = 5,
+    lookback_hours: int = 24,
+    min_score: int = 50,
+    limit: int = 20,
+    days: int = 30,
+    timezone_name: str = "Asia/Shanghai",
+    baseline_version: str = BASELINE_VERSION,
+) -> dict[str, Any]:
+    """Return the daily human-review plan needed to make feedback calibration trustworthy."""
+    quota = max(1, min(daily_quota, 50))
+    sql = f"""
+with bounds as (
+  select (date_trunc('day', now() at time zone {sql_literal(timezone_name)}) at time zone {sql_literal(timezone_name)}) as day_start
+)
+select json_build_object(
+  'today_total', count(*) filter (where created_at >= (select day_start from bounds)),
+  'today_confirmed_incident', count(*) filter (
+    where created_at >= (select day_start from bounds) and label_type = 'confirmed_incident'
+  ),
+  'today_false_positive', count(*) filter (
+    where created_at >= (select day_start from bounds) and (label_type = 'false_positive' or false_positive)
+  ),
+  'today_false_negative', count(*) filter (
+    where created_at >= (select day_start from bounds) and (label_type = 'false_negative' or false_negative)
+  ),
+  'window_total', count(*),
+  'window_confirmed_incident', count(*) filter (where label_type = 'confirmed_incident'),
+  'window_false_positive', count(*) filter (where label_type = 'false_positive' or false_positive),
+  'window_false_negative', count(*) filter (where label_type = 'false_negative' or false_negative),
+  'first_label_at', min(created_at),
+  'last_label_at', max(created_at)
+)
+from risk_feedback_labels
+where created_at >= now() - interval '{max(1, min(days, 365))} days';
+"""
+    stats = psql_json(database_url, sql) or {}
+    today_total = int(stats.get("today_total") or 0)
+    window_total = int(stats.get("window_total") or 0)
+    false_negative_count = int(stats.get("window_false_negative") or 0)
+    confirmed_count = int(stats.get("window_confirmed_incident") or 0)
+    false_positive_count = int(stats.get("window_false_positive") or 0)
+    candidates = risk_feedback_candidates(
+        database_url,
+        service_ids=service_ids,
+        lookback_hours=lookback_hours,
+        min_score=min_score,
+        limit=max(limit, quota),
+        baseline_version=baseline_version,
+    )
+    remaining_today = max(0, quota - today_total)
+    blockers: list[str] = []
+    if window_total < 20:
+        blockers.append("need_at_least_20_recent_feedback_labels_for_stable_calibration")
+    if false_negative_count == 0:
+        blockers.append("need_false_negative_reviews_to_learn_missed_risks")
+    if false_positive_count < 5:
+        blockers.append("need_more_false_positive_reviews_to_dampen_noisy_evidence")
+    if confirmed_count < 5:
+        blockers.append("need_more_confirmed_incident_reviews_to_validate_true_risk_evidence")
+    return {
+        "status": "quota_met" if remaining_today == 0 else "needs_review",
+        "timezone": timezone_name,
+        "daily_quota": quota,
+        "today_completed": today_total,
+        "remaining_today": remaining_today,
+        "days": days,
+        "label_distribution": stats,
+        "calibration_readiness": {
+            "status": "ready_for_initial_rules" if window_total >= 20 and false_negative_count > 0 else "not_ready",
+            "minimum_for_functional_test": 2,
+            "recommended_for_initial_rules": 20,
+            "recommended_per_pattern": 5,
+            "blockers": blockers,
+        },
+        "review_guidance": [
+            "Review at least daily_quota high-risk candidates per day.",
+            "Mark confirmed_incident when risk evidence maps to real service or user impact.",
+            "Mark false_positive when evidence is expected business behavior, batch work, or non-impacting noise.",
+            "Actively add false_negative labels from real incidents that were not ranked high.",
+            "Generate calibration rules only after enough labels exist for recurring evidence patterns.",
+        ],
+        "candidates": candidates["candidates"][: max(remaining_today, min(limit, quota))],
+        "candidate_count": candidates["candidate_count"],
+        "candidate_errors": candidates["errors"],
+    }
+
+
 def list_risk_calibration_rules(
     database_url: str,
     service_id: str | None = None,
@@ -1233,11 +1390,23 @@ def evaluate_window_dynamic_model(
         points = selected["weighted_points"]
         if points <= 0:
             continue
+        metric_impact = _risk_metric_impact(metric_name)
+        if metric_impact == "context":
+            points = min(points, 12)
+        baseline_delta = max(
+            selected["p95_deviation"] if isinstance(selected.get("p95_deviation"), (int, float)) else 0,
+            selected["p99_deviation"] if isinstance(selected.get("p99_deviation"), (int, float)) else 0,
+        )
+        suppressed_reason = _risk_evidence_suppression_reason(metric_name, value, row, baseline_delta)
+        if suppressed_reason:
+            continue
         evidence_item = {
             "source": "ml_dynamic_baseline",
+            "metric_impact": metric_impact,
             "metric": metric_name,
             "value": value,
             "points": points,
+            **_window_risk_context(row),
             "model_version": selected["model_version"],
             "model_type": selected["model_type"],
             "baseline_scope": selected["baseline_scope"],
@@ -1308,7 +1477,7 @@ def score_service_risk(
     top_evidence: list[dict[str, Any]] = []
     for item in sorted(evaluations, key=lambda row: row["score"], reverse=True):
         for evidence in item["evidence"]:
-            evidence = {**evidence, "window_start": item["window_start"]}
+            evidence = {**evidence, "window_start": item["window_start"], "window_end": item["window_end"]}
             top_evidence.append(evidence)
             if len(top_evidence) >= 10:
                 break
@@ -1321,7 +1490,7 @@ def score_service_risk(
     dynamic_model_evidence: list[dict[str, Any]] = []
     for item in sorted(model_evaluations, key=lambda row: row["score"], reverse=True):
         for evidence in item["evidence"]:
-            evidence = {**evidence, "window_start": item["window_start"]}
+            evidence = {**evidence, "window_start": item["window_start"], "window_end": item["window_end"]}
             dynamic_model_evidence.append(evidence)
             if len(dynamic_model_evidence) >= 10:
                 break
@@ -1398,6 +1567,7 @@ def risk_feedback_candidates(
                 "points": item.get("points"),
                 "deviation_type": item.get("deviation_type"),
                 "window_start": item.get("window_start"),
+                "window_end": item.get("window_end"),
             }
             for item in risk.get("top_evidence", [])[:5]
         ]
